@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">ZenShield</string>
+    <string name="tile_label">ZenShield</string>
+    <string name="profile_off">Off</string>
+    <string name="profile_dnd">Do Not Disturb</string>
+    <string name="profile_gaming">Gaming</string>
+    <string name="profile_work">Work</string>
+    <string name="profile_sleep">Sleep</string>
+    <string name="focus_shield_active">%1$s Active</string>
+    <string name="focus_shield_off">Focus Shield Inactive</string>
+    <string name="dim_lock_screen">Dim Lock Screen</string>
+    <string name="lockscreen_wallpaper_desc">Applies a minimalist dark slate lockscreen during sleep and focus sessions</string>
+    <string name="theme_follow_system">Dynamic Wallpaper Colors</string>
+    <string name="theme_profile_tint">Profile-Tinted Accents</string>
+    <string name="theme_amoled_black">AMOLED Pure Black</string>
+    <string name="permission_dnd_required">Notification Policy Access Required</string>
+    <string name="grant_permission">Grant Permission</string>
+</resources>

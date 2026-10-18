@@ -1,0 +1,6 @@
+{
+  "name": "ZenShield",
+  "description": "Material You focus guardian with profile-tinted theming, lock screen dimming, call screening, and notification control",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
