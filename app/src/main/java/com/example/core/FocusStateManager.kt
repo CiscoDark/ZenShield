@@ -35,7 +35,12 @@ data class FocusSessionState(
     val dimLockScreenEnabled: Boolean = true,
     val allowStarredContactsOnly: Boolean = true,
     val blockRepeatedCallers: Boolean = false,
+    val strictGamingLockdownEnabled: Boolean = true,
+    val allowRepeatCallersEnabled: Boolean = true,
     val silenceNotifications: Boolean = true,
+    val autoReplyEnabled: Boolean = true,
+    val autoReplyMessageTemplate: String = "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.",
+    val whitelistedPackages: Set<String> = emptySet(),
     val themePreferences: FocusThemePreferences = FocusThemePreferences(),
     val totalShieldedCalls: Int = 0,
     val totalShieldedNotifications: Int = 0,
@@ -71,7 +76,12 @@ class FocusStateManager private constructor(context: Context) {
         val dimLockScreen = prefs.getBoolean(KEY_DIM_LOCK_SCREEN, true)
         val allowStarredOnly = prefs.getBoolean(KEY_ALLOW_STARRED_ONLY, profile.defaultAllowStarredOnly)
         val blockRepeated = prefs.getBoolean(KEY_BLOCK_REPEATED, profile.defaultBlockRepeatedCalls)
+        val strictGaming = prefs.getBoolean(KEY_STRICT_GAMING, true)
+        val allowRepeat = prefs.getBoolean(KEY_ALLOW_REPEAT_CALLERS, true)
         val silenceNotifs = prefs.getBoolean(KEY_SILENCE_NOTIFS, profile.defaultSilenceNotifications)
+        val autoReply = prefs.getBoolean(KEY_AUTO_REPLY, true)
+        val autoReplyTemplate = prefs.getString(KEY_AUTO_REPLY_TEMPLATE, "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.") ?: "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
+        val whitelisted = prefs.getStringSet(KEY_WHITELISTED_PKGS, emptySet()) ?: emptySet()
 
         val followSystem = prefs.getBoolean(KEY_THEME_FOLLOW_SYSTEM, true)
         val profileTint = prefs.getBoolean(KEY_THEME_PROFILE_TINT, true)
@@ -86,6 +96,11 @@ class FocusStateManager private constructor(context: Context) {
             return FocusSessionState(
                 activeProfile = FocusProfile.OFF,
                 dimLockScreenEnabled = dimLockScreen,
+                strictGamingLockdownEnabled = strictGaming,
+                allowRepeatCallersEnabled = allowRepeat,
+                autoReplyEnabled = autoReply,
+                autoReplyMessageTemplate = autoReplyTemplate,
+                whitelistedPackages = whitelisted,
                 themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
                 totalShieldedCalls = shieldedCalls,
                 totalShieldedNotifications = shieldedNotifs
@@ -99,12 +114,120 @@ class FocusStateManager private constructor(context: Context) {
             dimLockScreenEnabled = dimLockScreen,
             allowStarredContactsOnly = allowStarredOnly,
             blockRepeatedCallers = blockRepeated,
+            strictGamingLockdownEnabled = strictGaming,
+            allowRepeatCallersEnabled = allowRepeat,
             silenceNotifications = silenceNotifs,
+            autoReplyEnabled = autoReply,
+            autoReplyMessageTemplate = autoReplyTemplate,
+            whitelistedPackages = whitelisted,
             themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
             totalShieldedCalls = shieldedCalls,
             totalShieldedNotifications = shieldedNotifs,
             sessionStartTimeMillis = startTime
         )
+    }
+
+    fun getActiveProfile(): FocusProfile = _state.value.activeProfile
+
+    fun isAllowStarredContacts(): Boolean = _state.value.allowStarredContactsOnly
+
+    fun isStrictGamingLockdown(): Boolean = _state.value.strictGamingLockdownEnabled
+
+    fun isAllowRepeatCallers(): Boolean = _state.value.allowRepeatCallersEnabled
+
+    fun isAutoReplyEnabled(): Boolean = _state.value.autoReplyEnabled
+
+    fun getAutoReplyMessage(profile: FocusProfile): String {
+        return try {
+            String.format(_state.value.autoReplyMessageTemplate, profile.displayName)
+        } catch (_: Exception) {
+            "🛡️ ZenShield: I currently have ${profile.displayName} Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
+        }
+    }
+
+    fun setAutoReplyEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(autoReplyEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_AUTO_REPLY, enabled).apply()
+    }
+
+    fun setAutoReplyMessageTemplate(template: String) {
+        val updated = _state.value.copy(autoReplyMessageTemplate = template)
+        _state.value = updated
+        prefs.edit().putString(KEY_AUTO_REPLY_TEMPLATE, template).apply()
+    }
+
+    fun isPackageWhitelisted(packageName: String): Boolean {
+        return _state.value.whitelistedPackages.contains(packageName)
+    }
+
+    fun addWhitelistedPackage(packageName: String) {
+        val updatedSet = _state.value.whitelistedPackages + packageName
+        val updated = _state.value.copy(whitelistedPackages = updatedSet)
+        _state.value = updated
+        prefs.edit().putStringSet(KEY_WHITELISTED_PKGS, updatedSet).apply()
+    }
+
+    fun removeWhitelistedPackage(packageName: String) {
+        val updatedSet = _state.value.whitelistedPackages - packageName
+        val updated = _state.value.copy(whitelistedPackages = updatedSet)
+        _state.value = updated
+        prefs.edit().putStringSet(KEY_WHITELISTED_PKGS, updatedSet).apply()
+    }
+
+    fun setStrictGamingLockdownEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(strictGamingLockdownEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_STRICT_GAMING, enabled).apply()
+    }
+
+    fun setAllowRepeatCallersEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(allowRepeatCallersEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_ALLOW_REPEAT_CALLERS, enabled).apply()
+    }
+
+    fun getCallSharedPreferences(): SharedPreferences {
+        return appContext.getSharedPreferences(CALL_PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun getVoipCacheSharedPreferences(): SharedPreferences {
+        return appContext.getSharedPreferences(VOIP_CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    fun checkVoipRepeatBreakthrough(callerName: String): Boolean {
+        if (callerName.isBlank()) return false
+        val cachePrefs = getVoipCacheSharedPreferences()
+        val key = "voip_repeat_${callerName.trim().lowercase()}"
+        val lastTimestamp = cachePrefs.getLong(key, 0L)
+        val now = System.currentTimeMillis()
+        val isWithinThreeMinutes = lastTimestamp > 0L && (now - lastTimestamp) <= THREE_MINUTES_MS
+
+        if (isWithinThreeMinutes) {
+            cachePrefs.edit().remove(key).apply()
+            return true
+        }
+
+        // Record 1st call timestamp
+        cachePrefs.edit().putLong(key, now).apply()
+        return false
+    }
+
+    fun shouldSendAutoReply(senderName: String): Boolean {
+        if (senderName.isBlank()) return false
+        val cachePrefs = getVoipCacheSharedPreferences()
+        val key = "autoreply_cooldown_${senderName.trim().lowercase()}"
+        val lastTimestamp = cachePrefs.getLong(key, 0L)
+        val now = System.currentTimeMillis()
+        // 30-minute cooldown (1,800,000 ms)
+        return (now - lastTimestamp) > THIRTY_MINUTES_MS
+    }
+
+    fun recordAutoReplySent(senderName: String) {
+        if (senderName.isBlank()) return
+        val cachePrefs = getVoipCacheSharedPreferences()
+        val key = "autoreply_cooldown_${senderName.trim().lowercase()}"
+        cachePrefs.edit().putLong(key, System.currentTimeMillis()).apply()
     }
 
     fun setProfile(
@@ -358,14 +481,24 @@ class FocusStateManager private constructor(context: Context) {
             }
             .putBoolean(KEY_ALLOW_STARRED_ONLY, state.allowStarredContactsOnly)
             .putBoolean(KEY_BLOCK_REPEATED, state.blockRepeatedCallers)
+            .putBoolean(KEY_STRICT_GAMING, state.strictGamingLockdownEnabled)
+            .putBoolean(KEY_ALLOW_REPEAT_CALLERS, state.allowRepeatCallersEnabled)
             .putBoolean(KEY_SILENCE_NOTIFS, state.silenceNotifications)
             .putBoolean(KEY_DIM_LOCK_SCREEN, state.dimLockScreenEnabled)
+            .putBoolean(KEY_AUTO_REPLY, state.autoReplyEnabled)
+            .putString(KEY_AUTO_REPLY_TEMPLATE, state.autoReplyMessageTemplate)
+            .putStringSet(KEY_WHITELISTED_PKGS, state.whitelistedPackages)
             .apply()
     }
 
     companion object {
         private const val TAG = "FocusStateManager"
         private const val PREFS_NAME = "zenshield_focus_prefs"
+        const val CALL_PREFS_NAME = "zenshield_call_bouncer_prefs"
+        const val VOIP_CACHE_PREFS_NAME = "zenshield_voip_cache_prefs"
+        const val THREE_MINUTES_MS = 180_000L
+        const val THIRTY_MINUTES_MS = 1_800_000L
+
         private const val KEY_ACTIVE_PROFILE = "key_active_profile"
         private const val KEY_EXPIRES_AT = "key_expires_at"
         private const val KEY_DURATION_OPTION = "key_duration_option"
@@ -373,7 +506,12 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_DIM_LOCK_SCREEN = "key_dim_lock_screen"
         private const val KEY_ALLOW_STARRED_ONLY = "key_allow_starred_only"
         private const val KEY_BLOCK_REPEATED = "key_block_repeated"
+        private const val KEY_STRICT_GAMING = "key_strict_gaming"
+        private const val KEY_ALLOW_REPEAT_CALLERS = "key_allow_repeat_callers"
         private const val KEY_SILENCE_NOTIFS = "key_silence_notifs"
+        private const val KEY_AUTO_REPLY = "key_auto_reply"
+        private const val KEY_AUTO_REPLY_TEMPLATE = "key_auto_reply_template"
+        private const val KEY_WHITELISTED_PKGS = "key_whitelisted_pkgs"
         private const val KEY_THEME_FOLLOW_SYSTEM = "key_theme_follow_system"
         private const val KEY_THEME_PROFILE_TINT = "key_theme_profile_tint"
         private const val KEY_THEME_AMOLED_BLACK = "key_theme_amoled_black"

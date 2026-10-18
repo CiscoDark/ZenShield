@@ -43,6 +43,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -77,10 +78,13 @@ import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import kotlinx.coroutines.delay
 
+import androidx.compose.material.icons.filled.Settings
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FocusDashboardScreen(
     stateManager: FocusStateManager,
+    onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state by stateManager.state.collectAsState()
@@ -118,10 +122,25 @@ fun FocusDashboardScreen(
                     }
                 },
                 actions = {
-                    StatusPill(
-                        isActive = state.activeProfile != FocusProfile.OFF,
-                        activeProfile = state.activeProfile
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        StatusPill(
+                            isActive = state.activeProfile != FocusProfile.OFF,
+                            activeProfile = state.activeProfile
+                        )
+                        IconButton(
+                            onClick = onNavigateToSettings,
+                            modifier = Modifier.testTag("open_settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Settings",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
@@ -199,21 +218,58 @@ fun FocusDashboardScreen(
             }
 
             item {
-                Text(
-                    text = "Material You & Theme Engine",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("theme_settings_navigation_card")
+                        .clickable { onNavigateToSettings() },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Palette,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
 
-            item {
-                ThemePreferencesCard(
-                    preferences = state.themePreferences,
-                    onPreferencesChanged = { updated ->
-                        stateManager.updateThemePreferences(updated)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Theme Engine & Preferences",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Dynamic Colors, AMOLED Pure Black, VoIP & Auto-Reply rules",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Open Settings",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
-                )
+                }
             }
 
             item {
@@ -230,6 +286,12 @@ fun FocusDashboardScreen(
                     state = state,
                     onDimLockScreenToggled = { enabled ->
                         stateManager.setDimLockScreenEnabled(enabled)
+                    },
+                    onStrictGamingToggled = { enabled ->
+                        stateManager.setStrictGamingLockdownEnabled(enabled)
+                    },
+                    onAllowRepeatToggled = { enabled ->
+                        stateManager.setAllowRepeatCallersEnabled(enabled)
                     },
                     onProfileSettingsChanged = { starredOnly, blockRepeated, silenceNotifs ->
                         stateManager.updateProfileSettings(starredOnly, blockRepeated, silenceNotifs)
@@ -704,6 +766,8 @@ fun ThemeToggleRow(
 fun LockScreenSettingsCard(
     state: FocusSessionState,
     onDimLockScreenToggled: (Boolean) -> Unit,
+    onStrictGamingToggled: (Boolean) -> Unit,
+    onAllowRepeatToggled: (Boolean) -> Unit,
     onProfileSettingsChanged: (Boolean, Boolean, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -731,13 +795,35 @@ fun LockScreenSettingsCard(
 
             ThemeToggleRow(
                 icon = Icons.Filled.PhonePaused,
-                title = "Starred Contacts Only",
+                title = "Starred Contacts Bypass",
                 subtitle = "Call screening passes priority callers, shields spam",
                 checked = state.allowStarredContactsOnly,
                 onCheckedChange = { checked ->
                     onProfileSettingsChanged(checked, state.blockRepeatedCallers, state.silenceNotifications)
                 },
                 testTag = "toggle_starred_only"
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            ThemeToggleRow(
+                icon = Icons.Filled.Timer,
+                title = "3-Minute Repeat Breakthrough",
+                subtitle = "Second call within 180 seconds rings out loud for emergencies",
+                checked = state.allowRepeatCallersEnabled,
+                onCheckedChange = onAllowRepeatToggled,
+                testTag = "toggle_repeat_breakthrough"
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            ThemeToggleRow(
+                icon = Icons.Filled.Shield,
+                title = "Strict Gaming Lockdown",
+                subtitle = "Block even starred contacts during gaming so play is never interrupted",
+                checked = state.strictGamingLockdownEnabled,
+                onCheckedChange = onStrictGamingToggled,
+                testTag = "toggle_gaming_lockdown"
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))

@@ -36,7 +36,7 @@
 
         <!-- Call Screening Bouncer Service -->
         <service
-            android:name=".service.CellularBouncerService"
+            android:name=".services.CellularBouncerService"
             android:permission="android.permission.BIND_SCREENING_SERVICE"
             android:exported="true">
             <intent-filter>
@@ -46,7 +46,7 @@
 
         <!-- Notification Guard Listener Service -->
         <service
-            android:name=".service.NotificationGuardService"
+            android:name=".services.NotificationGuardService"
             android:label="@string/app_name"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
@@ -57,7 +57,7 @@
 
         <!-- Quick Settings Tile Service -->
         <service
-            android:name=".service.ZenShieldTileService"
+            android:name=".services.ZenShieldTileService"
             android:icon="@drawable/ic_launcher_monochrome"
             android:label="@string/tile_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
@@ -66,6 +66,15 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- OEM Dialer Fallback Receiver -->
+        <receiver
+            android:name=".receivers.CallStateFallbackReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

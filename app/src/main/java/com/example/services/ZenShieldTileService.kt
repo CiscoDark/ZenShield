@@ -1,4 +1,4 @@
-package com.example.service
+package com.example.services
 
 import android.graphics.drawable.Icon
 import android.os.Build
@@ -39,17 +39,19 @@ class ZenShieldTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val stateManager = FocusStateManager.getInstance(applicationContext)
-        val currentState = stateManager.state.value
+        val currentProfile = stateManager.getActiveProfile()
 
-        // Quick toggle: switch between OFF and DO_NOT_DISTURB
-        val targetProfile = if (currentState.activeProfile == FocusProfile.OFF) {
-            FocusProfile.DO_NOT_DISTURB
-        } else {
-            FocusProfile.OFF
+        // Cycle through: OFF -> DO_NOT_DISTURB -> GAMING -> WORK -> SLEEP -> OFF
+        val nextProfile = when (currentProfile) {
+            FocusProfile.OFF -> FocusProfile.DO_NOT_DISTURB
+            FocusProfile.DO_NOT_DISTURB -> FocusProfile.GAMING
+            FocusProfile.GAMING -> FocusProfile.WORK
+            FocusProfile.WORK -> FocusProfile.SLEEP
+            FocusProfile.SLEEP -> FocusProfile.OFF
         }
 
-        stateManager.setProfile(targetProfile, DurationOption.UNTIL_TURNED_OFF)
-        updateTileState(targetProfile)
+        stateManager.setProfile(nextProfile, DurationOption.UNTIL_TURNED_OFF)
+        updateTileState(nextProfile)
     }
 
     private fun updateTileState(profile: FocusProfile) {
@@ -65,7 +67,7 @@ class ZenShieldTileService : TileService() {
             tile.state = Tile.STATE_ACTIVE
             tile.label = profile.displayName
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                tile.subtitle = "Shielded"
+                tile.subtitle = "Shield Active"
             }
         }
 
