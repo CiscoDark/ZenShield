@@ -40,7 +40,13 @@ data class FocusSessionState(
     val silenceNotifications: Boolean = true,
     val autoReplyEnabled: Boolean = true,
     val autoReplyMessageTemplate: String = "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.",
+    val autoDeclineVoipInGame: Boolean = true,
+    val suppressHeadsUpBanners: Boolean = true,
+    val networkLevelCallRejection: Boolean = true,
+    val autoDeclineVoipCalls: Boolean = true,
+    val smartUrgentBreakthroughEnabled: Boolean = true,
     val whitelistedPackages: Set<String> = emptySet(),
+    val profileWhitelists: Map<FocusProfile, Set<String>> = emptyMap(),
     val themePreferences: FocusThemePreferences = FocusThemePreferences(),
     val totalShieldedCalls: Int = 0,
     val totalShieldedNotifications: Int = 0,
@@ -83,6 +89,12 @@ class FocusStateManager private constructor(context: Context) {
         val autoReplyTemplate = prefs.getString(KEY_AUTO_REPLY_TEMPLATE, "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.") ?: "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
         val whitelisted = prefs.getStringSet(KEY_WHITELISTED_PKGS, emptySet()) ?: emptySet()
 
+        val autoDeclineVoipInGame = prefs.getBoolean(KEY_AUTO_DECLINE_VOIP_GAME, true)
+        val suppressHeadsUp = prefs.getBoolean(KEY_SUPPRESS_HEADS_UP, true)
+        val networkRejection = prefs.getBoolean(KEY_NETWORK_REJECTION, true)
+        val autoDeclineVoip = prefs.getBoolean(KEY_AUTO_DECLINE_VOIP, true)
+        val smartUrgent = prefs.getBoolean(KEY_SMART_URGENT, true)
+
         val followSystem = prefs.getBoolean(KEY_THEME_FOLLOW_SYSTEM, true)
         val profileTint = prefs.getBoolean(KEY_THEME_PROFILE_TINT, true)
         val amoledBlack = prefs.getBoolean(KEY_THEME_AMOLED_BLACK, false)
@@ -100,6 +112,11 @@ class FocusStateManager private constructor(context: Context) {
                 allowRepeatCallersEnabled = allowRepeat,
                 autoReplyEnabled = autoReply,
                 autoReplyMessageTemplate = autoReplyTemplate,
+                autoDeclineVoipInGame = autoDeclineVoipInGame,
+                suppressHeadsUpBanners = suppressHeadsUp,
+                networkLevelCallRejection = networkRejection,
+                autoDeclineVoipCalls = autoDeclineVoip,
+                smartUrgentBreakthroughEnabled = smartUrgent,
                 whitelistedPackages = whitelisted,
                 themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
                 totalShieldedCalls = shieldedCalls,
@@ -119,6 +136,11 @@ class FocusStateManager private constructor(context: Context) {
             silenceNotifications = silenceNotifs,
             autoReplyEnabled = autoReply,
             autoReplyMessageTemplate = autoReplyTemplate,
+            autoDeclineVoipInGame = autoDeclineVoipInGame,
+            suppressHeadsUpBanners = suppressHeadsUp,
+            networkLevelCallRejection = networkRejection,
+            autoDeclineVoipCalls = autoDeclineVoip,
+            smartUrgentBreakthroughEnabled = smartUrgent,
             whitelistedPackages = whitelisted,
             themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
             totalShieldedCalls = shieldedCalls,
@@ -136,6 +158,36 @@ class FocusStateManager private constructor(context: Context) {
     fun isAllowRepeatCallers(): Boolean = _state.value.allowRepeatCallersEnabled
 
     fun isAutoReplyEnabled(): Boolean = _state.value.autoReplyEnabled
+
+    fun setAutoDeclineVoipInGameEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(autoDeclineVoipInGame = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_AUTO_DECLINE_VOIP_GAME, enabled).apply()
+    }
+
+    fun setSuppressHeadsUpBannersEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(suppressHeadsUpBanners = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_SUPPRESS_HEADS_UP, enabled).apply()
+    }
+
+    fun setNetworkLevelCallRejectionEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(networkLevelCallRejection = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_NETWORK_REJECTION, enabled).apply()
+    }
+
+    fun setAutoDeclineVoipCallsEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(autoDeclineVoipCalls = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_AUTO_DECLINE_VOIP, enabled).apply()
+    }
+
+    fun setSmartUrgentBreakthroughEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(smartUrgentBreakthroughEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_SMART_URGENT, enabled).apply()
+    }
 
     fun getAutoReplyMessage(profile: FocusProfile): String {
         return try {
@@ -159,6 +211,35 @@ class FocusStateManager private constructor(context: Context) {
 
     fun isPackageWhitelisted(packageName: String): Boolean {
         return _state.value.whitelistedPackages.contains(packageName)
+    }
+
+    fun isPackageWhitelisted(profile: FocusProfile, packageName: String): Boolean {
+        val perProfile = getWhitelistedPackages(profile)
+        return perProfile.contains(packageName) || _state.value.whitelistedPackages.contains(packageName)
+    }
+
+    fun getWhitelistedPackages(profile: FocusProfile): Set<String> {
+        val key = "whitelisted_pkgs_${profile.id.lowercase()}"
+        return prefs.getStringSet(key, null) ?: _state.value.whitelistedPackages
+    }
+
+    fun setWhitelistedPackages(profile: FocusProfile, packages: Set<String>) {
+        val key = "whitelisted_pkgs_${profile.id.lowercase()}"
+        prefs.edit().putStringSet(key, packages).apply()
+        val updated = _state.value.copy(
+            profileWhitelists = _state.value.profileWhitelists + (profile to packages)
+        )
+        _state.value = updated
+    }
+
+    fun toggleWhitelistedPackage(profile: FocusProfile, packageName: String) {
+        val current = getWhitelistedPackages(profile)
+        val updated = if (current.contains(packageName)) {
+            current - packageName
+        } else {
+            current + packageName
+        }
+        setWhitelistedPackages(profile, updated)
     }
 
     fun addWhitelistedPackage(packageName: String) {
@@ -261,6 +342,17 @@ class FocusStateManager private constructor(context: Context) {
 
         // Sync Focus Lock Screen
         applyFocusLockScreen(appContext, profile, updated.dimLockScreenEnabled)
+
+        // Sync Bulletproof Watchdog Foreground Service
+        if (profile != FocusProfile.OFF) {
+            runCatching {
+                com.example.services.ZenShieldWatchdogService.start(appContext)
+            }
+        } else {
+            runCatching {
+                com.example.services.ZenShieldWatchdogService.stop(appContext)
+            }
+        }
     }
 
     fun setDuration(duration: DurationOption) {
@@ -488,6 +580,11 @@ class FocusStateManager private constructor(context: Context) {
             .putBoolean(KEY_AUTO_REPLY, state.autoReplyEnabled)
             .putString(KEY_AUTO_REPLY_TEMPLATE, state.autoReplyMessageTemplate)
             .putStringSet(KEY_WHITELISTED_PKGS, state.whitelistedPackages)
+            .putBoolean(KEY_AUTO_DECLINE_VOIP_GAME, state.autoDeclineVoipInGame)
+            .putBoolean(KEY_SUPPRESS_HEADS_UP, state.suppressHeadsUpBanners)
+            .putBoolean(KEY_NETWORK_REJECTION, state.networkLevelCallRejection)
+            .putBoolean(KEY_AUTO_DECLINE_VOIP, state.autoDeclineVoipCalls)
+            .putBoolean(KEY_SMART_URGENT, state.smartUrgentBreakthroughEnabled)
             .apply()
     }
 
@@ -512,6 +609,11 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_AUTO_REPLY = "key_auto_reply"
         private const val KEY_AUTO_REPLY_TEMPLATE = "key_auto_reply_template"
         private const val KEY_WHITELISTED_PKGS = "key_whitelisted_pkgs"
+        private const val KEY_AUTO_DECLINE_VOIP_GAME = "key_auto_decline_voip_game"
+        private const val KEY_SUPPRESS_HEADS_UP = "key_suppress_heads_up"
+        private const val KEY_NETWORK_REJECTION = "key_network_rejection"
+        private const val KEY_AUTO_DECLINE_VOIP = "key_auto_decline_voip"
+        private const val KEY_SMART_URGENT = "key_smart_urgent"
         private const val KEY_THEME_FOLLOW_SYSTEM = "key_theme_follow_system"
         private const val KEY_THEME_PROFILE_TINT = "key_theme_profile_tint"
         private const val KEY_THEME_AMOLED_BLACK = "key_theme_amoled_black"

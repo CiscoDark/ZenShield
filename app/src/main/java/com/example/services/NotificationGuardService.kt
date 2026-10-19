@@ -86,9 +86,9 @@ class NotificationGuardService : NotificationListenerService() {
         // 2. Regular Notifications: Whitelist, Smart Scanner, Auto-Reply, and Snooze
         // =========================================================================
 
-        // A. Whitelisted Package Check
-        if (stateManager.isPackageWhitelisted(sbn.packageName)) {
-            Log.d(TAG, "Allowing notification from whitelisted package: ${sbn.packageName}")
+        // A. Whitelisted Package Check (Per-Profile Whitelist)
+        if (stateManager.isPackageWhitelisted(activeProfile, sbn.packageName)) {
+            Log.d(TAG, "Allowing notification from whitelisted package: ${sbn.packageName} for ${activeProfile.displayName}")
             return
         }
 

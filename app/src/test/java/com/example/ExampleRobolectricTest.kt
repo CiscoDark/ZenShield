@@ -126,4 +126,36 @@ class ExampleRobolectricTest {
             assertEquals("Cycle from $current must lead to $next", next, evaluated)
         }
     }
+
+    @Test
+    fun `boot completed receiver restores active profile without crashing`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.WORK, DurationOption.UNTIL_TURNED_OFF)
+        assertEquals(FocusProfile.WORK, stateManager.getActiveProfile())
+
+        val receiver = com.example.receivers.BootCompletedReceiver()
+        val intent = android.content.Intent(android.content.Intent.ACTION_BOOT_COMPLETED)
+        receiver.onReceive(context, intent)
+
+        assertEquals(FocusProfile.WORK, stateManager.getActiveProfile())
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `per profile app whitelist stores and verifies packages`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val pkg = "com.google.android.talk"
+        assertFalse(stateManager.isPackageWhitelisted(FocusProfile.WORK, pkg))
+
+        stateManager.toggleWhitelistedPackage(FocusProfile.WORK, pkg)
+        assertTrue(stateManager.isPackageWhitelisted(FocusProfile.WORK, pkg))
+
+        // Ensure other profile doesn't inherit unless explicitly added
+        stateManager.toggleWhitelistedPackage(FocusProfile.WORK, pkg)
+        assertFalse(stateManager.isPackageWhitelisted(FocusProfile.WORK, pkg))
+    }
 }
