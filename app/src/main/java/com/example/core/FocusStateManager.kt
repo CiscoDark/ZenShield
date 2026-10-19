@@ -47,6 +47,10 @@ data class FocusSessionState(
     val smartUrgentBreakthroughEnabled: Boolean = true,
     val whitelistedPackages: Set<String> = emptySet(),
     val profileWhitelists: Map<FocusProfile, Set<String>> = emptyMap(),
+    val autoGameDetectionEnabled: Boolean = true,
+    val isAutoTriggeredByGame: Boolean = false,
+    val previousProfileBeforeGame: FocusProfile = FocusProfile.OFF,
+    val customGamePackages: Set<String> = emptySet(),
     val themePreferences: FocusThemePreferences = FocusThemePreferences(),
     val totalShieldedCalls: Int = 0,
     val totalShieldedNotifications: Int = 0,
@@ -99,6 +103,12 @@ class FocusStateManager private constructor(context: Context) {
         val profileTint = prefs.getBoolean(KEY_THEME_PROFILE_TINT, true)
         val amoledBlack = prefs.getBoolean(KEY_THEME_AMOLED_BLACK, false)
 
+        val autoGameDetection = prefs.getBoolean(KEY_AUTO_GAME_DETECTION, true)
+        val isAutoGame = prefs.getBoolean(KEY_IS_AUTO_TRIGGERED_GAME, false)
+        val prevProfileId = prefs.getString(KEY_PREVIOUS_PROFILE_BEFORE_GAME, FocusProfile.OFF.id)
+        val prevProfile = FocusProfile.fromId(prevProfileId)
+        val customGames = prefs.getStringSet(KEY_CUSTOM_GAME_PACKAGES, emptySet()) ?: emptySet()
+
         val shieldedCalls = prefs.getInt(KEY_SHIELDED_CALLS, 0)
         val shieldedNotifs = prefs.getInt(KEY_SHIELDED_NOTIFS, 0)
         val startTime = if (prefs.contains(KEY_SESSION_START)) prefs.getLong(KEY_SESSION_START, 0L).takeIf { it > 0 } else null
@@ -118,6 +128,10 @@ class FocusStateManager private constructor(context: Context) {
                 autoDeclineVoipCalls = autoDeclineVoip,
                 smartUrgentBreakthroughEnabled = smartUrgent,
                 whitelistedPackages = whitelisted,
+                autoGameDetectionEnabled = autoGameDetection,
+                isAutoTriggeredByGame = false,
+                previousProfileBeforeGame = FocusProfile.OFF,
+                customGamePackages = customGames,
                 themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
                 totalShieldedCalls = shieldedCalls,
                 totalShieldedNotifications = shieldedNotifs
@@ -142,6 +156,10 @@ class FocusStateManager private constructor(context: Context) {
             autoDeclineVoipCalls = autoDeclineVoip,
             smartUrgentBreakthroughEnabled = smartUrgent,
             whitelistedPackages = whitelisted,
+            autoGameDetectionEnabled = autoGameDetection,
+            isAutoTriggeredByGame = isAutoGame,
+            previousProfileBeforeGame = prevProfile,
+            customGamePackages = customGames,
             themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
             totalShieldedCalls = shieldedCalls,
             totalShieldedNotifications = shieldedNotifs,
@@ -268,6 +286,85 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putBoolean(KEY_ALLOW_REPEAT_CALLERS, enabled).apply()
     }
 
+    fun isAutoGameDetectionEnabled(): Boolean = _state.value.autoGameDetectionEnabled
+
+    fun setAutoGameDetectionEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(autoGameDetectionEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_AUTO_GAME_DETECTION, enabled).apply()
+        if (enabled) {
+            runCatching { com.example.services.GameDetectorService.start(appContext) }
+        } else {
+            runCatching { com.example.services.GameDetectorService.stop(appContext) }
+        }
+    }
+
+    fun getCustomGamePackages(): Set<String> = _state.value.customGamePackages
+
+    fun addCustomGamePackage(packageName: String) {
+        val updatedSet = _state.value.customGamePackages + packageName
+        val updated = _state.value.copy(customGamePackages = updatedSet)
+        _state.value = updated
+        prefs.edit().putStringSet(KEY_CUSTOM_GAME_PACKAGES, updatedSet).apply()
+    }
+
+    fun removeCustomGamePackage(packageName: String) {
+        val updatedSet = _state.value.customGamePackages - packageName
+        val updated = _state.value.copy(customGamePackages = updatedSet)
+        _state.value = updated
+        prefs.edit().putStringSet(KEY_CUSTOM_GAME_PACKAGES, updatedSet).apply()
+    }
+
+    fun handleGameLaunched(packageName: String) {
+        val current = _state.value
+        if (!current.autoGameDetectionEnabled) return
+        if (current.activeProfile == FocusProfile.GAMING) return
+
+        val prev = current.activeProfile
+        Log.i(TAG, "Game launched ($packageName). Auto-activating GAMING focus profile. Previous profile: ${prev.displayName}")
+        val updated = current.copy(
+            activeProfile = FocusProfile.GAMING,
+            previousProfileBeforeGame = prev,
+            isAutoTriggeredByGame = true,
+            durationOption = DurationOption.UNTIL_TURNED_OFF,
+            expiresAtMillis = null
+        )
+        _state.value = updated
+        persistState(updated)
+        syncInterruptionFilter(FocusProfile.GAMING)
+        applyFocusLockScreen(appContext, FocusProfile.GAMING, updated.dimLockScreenEnabled)
+        runCatching {
+            com.example.services.ZenShieldWatchdogService.start(appContext)
+        }
+    }
+
+    fun handleGameExited() {
+        val current = _state.value
+        if (!current.isAutoTriggeredByGame || current.activeProfile != FocusProfile.GAMING) return
+
+        val targetProfile = current.previousProfileBeforeGame
+        Log.i(TAG, "Game exited. Reverting focus profile from GAMING to ${targetProfile.displayName}")
+        val updated = current.copy(
+            activeProfile = targetProfile,
+            isAutoTriggeredByGame = false,
+            durationOption = DurationOption.UNTIL_TURNED_OFF,
+            expiresAtMillis = null
+        )
+        _state.value = updated
+        persistState(updated)
+        syncInterruptionFilter(targetProfile)
+        applyFocusLockScreen(appContext, targetProfile, updated.dimLockScreenEnabled)
+        if (targetProfile != FocusProfile.OFF) {
+            runCatching {
+                com.example.services.ZenShieldWatchdogService.start(appContext)
+            }
+        } else {
+            runCatching {
+                com.example.services.ZenShieldWatchdogService.stop(appContext)
+            }
+        }
+    }
+
     fun getCallSharedPreferences(): SharedPreferences {
         return appContext.getSharedPreferences(CALL_PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -329,6 +426,7 @@ class FocusStateManager private constructor(context: Context) {
             expiresAtMillis = expiresAt,
             durationOption = duration,
             sessionStartTimeMillis = if (profile != FocusProfile.OFF) now else null,
+            isAutoTriggeredByGame = false,
             allowStarredContactsOnly = profile.defaultAllowStarredOnly,
             blockRepeatedCallers = profile.defaultBlockRepeatedCalls,
             silenceNotifications = profile.defaultSilenceNotifications
@@ -585,6 +683,10 @@ class FocusStateManager private constructor(context: Context) {
             .putBoolean(KEY_NETWORK_REJECTION, state.networkLevelCallRejection)
             .putBoolean(KEY_AUTO_DECLINE_VOIP, state.autoDeclineVoipCalls)
             .putBoolean(KEY_SMART_URGENT, state.smartUrgentBreakthroughEnabled)
+            .putBoolean(KEY_AUTO_GAME_DETECTION, state.autoGameDetectionEnabled)
+            .putBoolean(KEY_IS_AUTO_TRIGGERED_GAME, state.isAutoTriggeredByGame)
+            .putString(KEY_PREVIOUS_PROFILE_BEFORE_GAME, state.previousProfileBeforeGame.id)
+            .putStringSet(KEY_CUSTOM_GAME_PACKAGES, state.customGamePackages)
             .apply()
     }
 
@@ -619,6 +721,10 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_THEME_AMOLED_BLACK = "key_theme_amoled_black"
         private const val KEY_SHIELDED_CALLS = "key_shielded_calls"
         private const val KEY_SHIELDED_NOTIFS = "key_shielded_notifs"
+        private const val KEY_AUTO_GAME_DETECTION = "key_auto_game_detection"
+        private const val KEY_IS_AUTO_TRIGGERED_GAME = "key_is_auto_game"
+        private const val KEY_PREVIOUS_PROFILE_BEFORE_GAME = "key_prev_profile_game"
+        private const val KEY_CUSTOM_GAME_PACKAGES = "key_custom_game_packages"
 
         @Volatile
         private var INSTANCE: FocusStateManager? = null

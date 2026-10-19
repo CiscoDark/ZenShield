@@ -104,7 +104,9 @@ import com.example.core.DurationOption
 import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
+import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
+import com.example.ui.GameDetectionCard
 import com.example.ui.theme.ZenShieldTheme
 import kotlinx.coroutines.delay
 
@@ -143,6 +145,7 @@ fun ZenShieldDashboardScreen(
     val state by stateManager.state.collectAsState()
     val context = LocalContext.current
     var showWhitelistSheet by remember { mutableStateOf(false) }
+    var showGamePickerSheet by remember { mutableStateOf(false) }
 
     // System Permissions & Roles Trackers
     var hasCallScreeningRole by remember { mutableStateOf(checkCallScreeningRole(context)) }
@@ -150,6 +153,7 @@ fun ZenShieldDashboardScreen(
     var hasDndAccess by remember { mutableStateOf(stateManager.isNotificationPolicyAccessGranted()) }
     var hasRuntimePermissions by remember { mutableStateOf(checkRuntimePermissions(context)) }
     var hasBatteryExemption by remember { mutableStateOf(checkBatteryOptimizationExemption(context)) }
+    var hasUsageStatsAccess by remember { mutableStateOf(GameDetectorService.hasUsageStatsPermission(context)) }
 
     // Re-check permissions and roles on lifecycle resume
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -161,6 +165,7 @@ fun ZenShieldDashboardScreen(
                 hasDndAccess = stateManager.isNotificationPolicyAccessGranted()
                 hasRuntimePermissions = checkRuntimePermissions(context)
                 hasBatteryExemption = checkBatteryOptimizationExemption(context)
+                hasUsageStatsAccess = GameDetectorService.hasUsageStatsPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -344,6 +349,15 @@ fun ZenShieldDashboardScreen(
                         testTag = "switch_gaming_heads_up"
                     )
                 }
+            }
+
+            // Real-Time Game Launch Detector & Zero-Airtime VoIP Reply
+            item {
+                GameDetectionCard(
+                    state = state,
+                    stateManager = stateManager,
+                    onOpenAppPicker = { showGamePickerSheet = true }
+                )
             }
 
             // Card 2: Active Call & VoIP Bouncer
@@ -539,6 +553,20 @@ fun ZenShieldDashboardScreen(
                             }
                         }
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    PermissionStatusRow(
+                        title = "Usage Stats Access",
+                        description = "Required to detect real-time game launches and auto-engage Gaming profile",
+                        isGranted = hasUsageStatsAccess,
+                        actionLabel = "Grant",
+                        onAction = {
+                            runCatching {
+                                context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                })
+                            }
+                        }
+                    )
                 }
             }
 
@@ -552,6 +580,14 @@ fun ZenShieldDashboardScreen(
         AppWhitelistBottomSheet(
             stateManager = stateManager,
             onDismissRequest = { showWhitelistSheet = false }
+        )
+    }
+
+    if (showGamePickerSheet) {
+        AppWhitelistBottomSheet(
+            stateManager = stateManager,
+            isGamePicker = true,
+            onDismissRequest = { showGamePickerSheet = false }
         )
     }
 }

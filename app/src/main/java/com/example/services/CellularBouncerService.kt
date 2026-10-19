@@ -107,7 +107,7 @@ class CellularBouncerService : CallScreeningService() {
             .setDisallowCall(true)
             .setRejectCall(true)
             .setSkipCallLog(false)
-            .setSkipNotification(false)
+            .setSkipNotification(true)
             .build()
 
         respondToCall(callDetails, response)

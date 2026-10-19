@@ -158,4 +158,61 @@ class ExampleRobolectricTest {
         stateManager.toggleWhitelistedPackage(FocusProfile.WORK, pkg)
         assertFalse(stateManager.isPackageWhitelisted(FocusProfile.WORK, pkg))
     }
+
+    @Test
+    fun `auto game detection triggers gaming mode and reverts on exit`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        // Start in WORK profile
+        stateManager.setProfile(FocusProfile.WORK, DurationOption.UNTIL_TURNED_OFF)
+        assertEquals(FocusProfile.WORK, stateManager.getActiveProfile())
+        stateManager.setAutoGameDetectionEnabled(true)
+
+        // Launch game
+        val gamePackage = "com.epicgames.portal"
+        stateManager.handleGameLaunched(gamePackage)
+
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+        assertEquals(FocusProfile.WORK, stateManager.state.value.previousProfileBeforeGame)
+        assertTrue(stateManager.state.value.isAutoTriggeredByGame)
+
+        // Exit game
+        stateManager.handleGameExited()
+
+        // Must revert to WORK
+        assertEquals(FocusProfile.WORK, stateManager.getActiveProfile())
+        assertFalse(stateManager.state.value.isAutoTriggeredByGame)
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `custom game packages can be added removed and persist in state`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val customEmulator = "org.ppsspp.ppsspp"
+        assertFalse(stateManager.getCustomGamePackages().contains(customEmulator))
+
+        stateManager.addCustomGamePackage(customEmulator)
+        assertTrue(stateManager.getCustomGamePackages().contains(customEmulator))
+        assertTrue(stateManager.state.value.customGamePackages.contains(customEmulator))
+
+        stateManager.removeCustomGamePackage(customEmulator)
+        assertFalse(stateManager.getCustomGamePackages().contains(customEmulator))
+        assertFalse(stateManager.state.value.customGamePackages.contains(customEmulator))
+    }
+
+    @Test
+    fun `zero airtime voip reply respects 30 minute cooldown without carrier sms`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val caller = "WhatsApp:Alex"
+        assertTrue(stateManager.shouldSendAutoReply(caller))
+
+        stateManager.recordAutoReplySent(caller)
+        assertFalse("Should be in cooldown immediately after sending", stateManager.shouldSendAutoReply(caller))
+    }
 }

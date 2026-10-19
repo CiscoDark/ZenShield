@@ -18,6 +18,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
     <queries>
         <intent>
@@ -91,6 +92,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Focus guardian to monitor telephony call screening and notification listener background persistence" />
         </service>
+
+        <!-- Real-Time Game Launch Detector Service -->
+        <service
+            android:name=".services.GameDetectorService"
+            android:exported="false" />
 
         <!-- OEM Dialer Fallback Receiver -->
         <receiver

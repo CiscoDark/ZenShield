@@ -64,6 +64,7 @@ fun AppWhitelistBottomSheet(
     stateManager: FocusStateManager,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
+    isGamePicker: Boolean = false,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 ) {
     val context = LocalContext.current
@@ -71,7 +72,7 @@ fun AppWhitelistBottomSheet(
     var installedApps by remember { mutableStateOf<List<InstalledAppInfo>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategoryFilter by remember { mutableStateOf("All") }
+    var selectedCategoryFilter by remember { mutableStateOf(if (isGamePicker) "Games" else "All") }
 
     val state by stateManager.state.collectAsState()
 
@@ -112,13 +113,17 @@ fun AppWhitelistBottomSheet(
             ) {
                 Column {
                     Text(
-                        text = "App Whitelist Picker",
+                        text = if (isGamePicker) "Custom Game Library" else "App Whitelist Picker",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "${currentProfileWhitelist.size} apps allowed in ${selectedProfileToConfigure.displayName}",
+                        text = if (isGamePicker) {
+                            "${state.customGamePackages.size} custom apps designated as games"
+                        } else {
+                            "${currentProfileWhitelist.size} apps allowed in ${selectedProfileToConfigure.displayName}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -140,35 +145,37 @@ fun AppWhitelistBottomSheet(
                 }
             }
 
-            // Per-Profile Tabs: Work, Gaming, Do Not Disturb, Sleep
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf(
-                    FocusProfile.WORK,
-                    FocusProfile.GAMING,
-                    FocusProfile.DO_NOT_DISTURB,
-                    FocusProfile.SLEEP
-                ).forEach { profile ->
-                    val isSelected = selectedProfileToConfigure == profile
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { selectedProfileToConfigure = profile },
-                        label = {
-                            Text(
-                                text = profile.displayName,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
+            // Per-Profile Tabs: Work, Gaming, Do Not Disturb, Sleep (shown in whitelist mode)
+            if (!isGamePicker) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        FocusProfile.WORK,
+                        FocusProfile.GAMING,
+                        FocusProfile.DO_NOT_DISTURB,
+                        FocusProfile.SLEEP
+                    ).forEach { profile ->
+                        val isSelected = selectedProfileToConfigure == profile
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedProfileToConfigure = profile },
+                            label = {
+                                Text(
+                                    text = profile.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
 
@@ -246,11 +253,15 @@ fun AppWhitelistBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filteredApps, key = { it.packageName }) { app ->
-                        val isWhitelisted = currentProfileWhitelist.contains(app.packageName)
+                        val isItemChecked = if (isGamePicker) {
+                            state.customGamePackages.contains(app.packageName)
+                        } else {
+                            currentProfileWhitelist.contains(app.packageName)
+                        }
 
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (isWhitelisted) {
+                            color = if (isItemChecked) {
                                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
                             } else {
                                 MaterialTheme.colorScheme.surfaceContainer
@@ -314,12 +325,20 @@ fun AppWhitelistBottomSheet(
                                 }
 
                                 Checkbox(
-                                    checked = isWhitelisted,
-                                    onCheckedChange = {
-                                        stateManager.toggleWhitelistedPackage(
-                                            selectedProfileToConfigure,
-                                            app.packageName
-                                        )
+                                    checked = isItemChecked,
+                                    onCheckedChange = { checked ->
+                                        if (isGamePicker) {
+                                            if (checked) {
+                                                stateManager.addCustomGamePackage(app.packageName)
+                                            } else {
+                                                stateManager.removeCustomGamePackage(app.packageName)
+                                            }
+                                        } else {
+                                            stateManager.toggleWhitelistedPackage(
+                                                selectedProfileToConfigure,
+                                                app.packageName
+                                            )
+                                        }
                                     },
                                     modifier = Modifier.testTag("checkbox_${app.packageName}")
                                 )
