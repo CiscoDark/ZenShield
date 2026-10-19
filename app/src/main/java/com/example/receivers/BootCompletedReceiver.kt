@@ -6,7 +6,7 @@ import android.content.Intent
 import android.util.Log
 import com.example.core.FocusProfile
 import com.example.core.FocusStateManager
-import com.example.services.ZenShieldWatchdogService
+import com.example.services.ZenShieldForegroundService
 
 class BootCompletedReceiver : BroadcastReceiver() {
 
@@ -27,8 +27,8 @@ class BootCompletedReceiver : BroadcastReceiver() {
             // Re-apply interruption filter & dim lock screen
             stateManager.setProfile(currentState.activeProfile, currentState.durationOption)
 
-            // Start bulletproof watchdog foreground service
-            ZenShieldWatchdogService.start(context)
+            // Start live focus controller foreground service
+            ZenShieldForegroundService.start(context)
         } else {
             Log.d(TAG, "Focus profile is OFF or expired. No restoration required.")
             stateManager.setProfile(FocusProfile.OFF)

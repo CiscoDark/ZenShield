@@ -215,4 +215,58 @@ class ExampleRobolectricTest {
         stateManager.recordAutoReplySent(caller)
         assertFalse("Should be in cooldown immediately after sending", stateManager.shouldSendAutoReply(caller))
     }
+
+    @Test
+    fun `cycleNextActiveProfile correctly loops through active profiles`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+        assertEquals(FocusProfile.DO_NOT_DISTURB, stateManager.getActiveProfile())
+
+        stateManager.cycleNextActiveProfile(context)
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+
+        stateManager.cycleNextActiveProfile(context)
+        assertEquals(FocusProfile.WORK, stateManager.getActiveProfile())
+
+        stateManager.cycleNextActiveProfile(context)
+        assertEquals(FocusProfile.SLEEP, stateManager.getActiveProfile())
+
+        stateManager.cycleNextActiveProfile(context)
+        assertEquals(FocusProfile.DO_NOT_DISTURB, stateManager.getActiveProfile())
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `adjustRemainingTime increments and decrements timer with minimum clamp`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.WORK)
+        // Untimed initially
+        assertEquals(null, stateManager.state.value.expiresAtMillis)
+
+        // Adding 15 min creates expiry from now
+        val beforeAdd = System.currentTimeMillis()
+        stateManager.adjustRemainingTime(context, 15)
+        val expiresAfter15 = stateManager.state.value.expiresAtMillis
+        assertTrue(expiresAfter15 != null)
+        assertTrue(expiresAfter15!! >= beforeAdd + (14 * 60_000L))
+
+        // Adding another 30 min
+        stateManager.adjustRemainingTime(context, 30)
+        val expiresAfter45 = stateManager.state.value.expiresAtMillis
+        assertTrue(expiresAfter45!! >= expiresAfter15 + (29 * 60_000L))
+
+        // Subtracting 15 min
+        stateManager.adjustRemainingTime(context, -15)
+        val expiresAfterSub = stateManager.state.value.expiresAtMillis
+        assertTrue(expiresAfterSub!! < expiresAfter45)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+    }
 }
+

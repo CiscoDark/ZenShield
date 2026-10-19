@@ -83,6 +83,16 @@
             </intent-filter>
         </service>
 
+        <!-- Interactive Live Focus Controller Foreground Service -->
+        <service
+            android:name=".services.ZenShieldForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Focus guardian to monitor telephony call screening and notification listener background persistence" />
+        </service>
+
         <!-- Bulletproof Watchdog Foreground Service -->
         <service
             android:name=".services.ZenShieldWatchdogService"

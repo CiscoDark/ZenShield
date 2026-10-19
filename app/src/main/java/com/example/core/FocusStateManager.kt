@@ -334,7 +334,7 @@ class FocusStateManager private constructor(context: Context) {
         syncInterruptionFilter(FocusProfile.GAMING)
         applyFocusLockScreen(appContext, FocusProfile.GAMING, updated.dimLockScreenEnabled)
         runCatching {
-            com.example.services.ZenShieldWatchdogService.start(appContext)
+            com.example.services.ZenShieldForegroundService.start(appContext)
         }
     }
 
@@ -356,11 +356,11 @@ class FocusStateManager private constructor(context: Context) {
         applyFocusLockScreen(appContext, targetProfile, updated.dimLockScreenEnabled)
         if (targetProfile != FocusProfile.OFF) {
             runCatching {
-                com.example.services.ZenShieldWatchdogService.start(appContext)
+                com.example.services.ZenShieldForegroundService.start(appContext)
             }
         } else {
             runCatching {
-                com.example.services.ZenShieldWatchdogService.stop(appContext)
+                com.example.services.ZenShieldForegroundService.stop(appContext)
             }
         }
     }
@@ -441,15 +441,85 @@ class FocusStateManager private constructor(context: Context) {
         // Sync Focus Lock Screen
         applyFocusLockScreen(appContext, profile, updated.dimLockScreenEnabled)
 
-        // Sync Bulletproof Watchdog Foreground Service
+        // Sync Bulletproof Watchdog & Live Focus Controller Foreground Service
         if (profile != FocusProfile.OFF) {
             runCatching {
-                com.example.services.ZenShieldWatchdogService.start(appContext)
+                com.example.services.ZenShieldForegroundService.start(appContext)
             }
         } else {
             runCatching {
-                com.example.services.ZenShieldWatchdogService.stop(appContext)
+                com.example.services.ZenShieldForegroundService.stop(appContext)
             }
+        }
+    }
+
+    fun adjustRemainingTime(context: Context, deltaMinutes: Long) {
+        val current = _state.value
+        if (current.activeProfile == FocusProfile.OFF) return
+
+        val now = System.currentTimeMillis()
+        val currentExpiry = current.expiresAtMillis
+        val newExpiry: Long
+
+        if (currentExpiry == null || currentExpiry <= now) {
+            if (deltaMinutes > 0) {
+                newExpiry = now + (deltaMinutes * 60_000L)
+            } else {
+                return
+            }
+        } else {
+            val adjusted = currentExpiry + (deltaMinutes * 60_000L)
+            if (adjusted <= now) {
+                val remainingMs = currentExpiry - now
+                if (remainingMs <= 5 * 60_000L) {
+                    setProfile(FocusProfile.OFF)
+                    return
+                } else {
+                    newExpiry = now + (5 * 60_000L)
+                }
+            } else {
+                newExpiry = adjusted
+            }
+        }
+
+        expirationJob?.cancel()
+        startExpirationCountdown(newExpiry)
+
+        val updated = current.copy(
+            expiresAtMillis = newExpiry,
+            durationOption = DurationOption.UNTIL_TURNED_OFF
+        )
+        _state.value = updated
+        persistState(updated)
+
+        runCatching {
+            com.example.services.ZenShieldForegroundService.update(context)
+        }
+    }
+
+    fun cycleNextActiveProfile(context: Context) {
+        val current = _state.value
+        val nextProfile = when (current.activeProfile) {
+            FocusProfile.DO_NOT_DISTURB -> FocusProfile.GAMING
+            FocusProfile.GAMING -> FocusProfile.WORK
+            FocusProfile.WORK -> FocusProfile.SLEEP
+            FocusProfile.SLEEP -> FocusProfile.DO_NOT_DISTURB
+            FocusProfile.OFF -> FocusProfile.DO_NOT_DISTURB
+        }
+
+        val updated = current.copy(
+            activeProfile = nextProfile,
+            allowStarredContactsOnly = nextProfile.defaultAllowStarredOnly,
+            blockRepeatedCallers = nextProfile.defaultBlockRepeatedCalls,
+            silenceNotifications = nextProfile.defaultSilenceNotifications
+        )
+        _state.value = updated
+        persistState(updated)
+        syncInterruptionFilter(nextProfile)
+        applyFocusLockScreen(appContext, nextProfile, updated.dimLockScreenEnabled)
+
+        runCatching {
+            com.example.services.ZenShieldForegroundService.update(context)
         }
     }
 
