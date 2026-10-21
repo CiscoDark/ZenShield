@@ -94,11 +94,17 @@ private val SleepDarkColorScheme = DefaultZenDarkColorScheme.copy(
     tertiary = SleepTertiaryDark
 )
 
+/**
+ * DynamicTheme: Core Material 3 dynamic color theme wrapper for Material You design standards.
+ * On Android 12+ (API 31+), it dynamically extracts and applies the user's personal wallpaper
+ * palette via dynamicDarkColorScheme and dynamicLightColorScheme.
+ */
 @Composable
-fun ZenShieldTheme(
+fun DynamicTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
     activeProfile: FocusProfile = FocusProfile.OFF,
     preferences: FocusThemePreferences = FocusThemePreferences(),
-    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
@@ -111,12 +117,12 @@ fun ZenShieldTheme(
                 FocusProfile.GAMING -> GamingDarkColorScheme
                 FocusProfile.WORK -> WorkDarkColorScheme
                 FocusProfile.SLEEP -> SleepDarkColorScheme
-                FocusProfile.OFF -> DefaultZenDarkColorScheme
+                FocusProfile.OFF -> if (darkTheme) DefaultZenDarkColorScheme else DefaultZenLightColorScheme
             }
         }
 
         // 2. Follow System Wallpaper (Material You Dynamic Colors on Android 12+)
-        preferences.followSystemWallpaper && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        dynamicColor && preferences.followSystemWallpaper && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
 
@@ -148,11 +154,44 @@ fun ZenShieldTheme(
     )
 }
 
+@Composable
+fun SentinalTheme(
+    activeProfile: FocusProfile = FocusProfile.OFF,
+    preferences: FocusThemePreferences = FocusThemePreferences(),
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = preferences.followSystemWallpaper,
+    content: @Composable () -> Unit
+) {
+    DynamicTheme(
+        darkTheme = darkTheme,
+        dynamicColor = dynamicColor,
+        activeProfile = activeProfile,
+        preferences = preferences,
+        content = content
+    )
+}
+
+@Composable
+fun ZenShieldTheme(
+    activeProfile: FocusProfile = FocusProfile.OFF,
+    preferences: FocusThemePreferences = FocusThemePreferences(),
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) {
+    DynamicTheme(
+        darkTheme = darkTheme,
+        dynamicColor = preferences.followSystemWallpaper,
+        activeProfile = activeProfile,
+        preferences = preferences,
+        content = content
+    )
+}
+
 // Backwards-compatible alias for template references
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    ZenShieldTheme(darkTheme = darkTheme, content = content)
+    DynamicTheme(darkTheme = darkTheme, content = content)
 }

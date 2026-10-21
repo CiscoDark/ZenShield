@@ -284,7 +284,7 @@ class ZenShieldForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 LIVE_CHANNEL_ID,
-                "ZenShield Live Focus Controller",
+                "Sentinal Live Focus Controller",
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Displays the interactive Live Focus Controller notification and countdown timer"

@@ -39,7 +39,7 @@ data class FocusSessionState(
     val allowRepeatCallersEnabled: Boolean = true,
     val silenceNotifications: Boolean = true,
     val autoReplyEnabled: Boolean = true,
-    val autoReplyMessageTemplate: String = "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.",
+    val autoReplyMessageTemplate: String = "🛡️ Sentinal: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.",
     val perProfileAutoReplyMessages: Map<FocusProfile, String> = emptyMap(),
     val autoDeclineVoipInGame: Boolean = true,
     val suppressHeadsUpBanners: Boolean = true,
@@ -55,7 +55,8 @@ data class FocusSessionState(
     val themePreferences: FocusThemePreferences = FocusThemePreferences(),
     val totalShieldedCalls: Int = 0,
     val totalShieldedNotifications: Int = 0,
-    val sessionStartTimeMillis: Long? = null
+    val sessionStartTimeMillis: Long? = null,
+    val declineAllCallsRegardless: Boolean = false
 )
 
 class FocusStateManager private constructor(context: Context) {
@@ -88,6 +89,13 @@ class FocusStateManager private constructor(context: Context) {
         if (current.activeProfile != FocusProfile.OFF && current.expiresAtMillis != null) {
             startExpirationCountdown(current.expiresAtMillis)
         }
+
+        // Auto-activate Game Detection Service on startup if enabled
+        if (current.autoGameDetectionEnabled) {
+            runCatching {
+                com.example.services.GameDetectorService.start(appContext)
+            }
+        }
     }
 
     private fun loadInitialState(): FocusSessionState {
@@ -105,6 +113,7 @@ class FocusStateManager private constructor(context: Context) {
         val silenceNotifs = prefs.getBoolean(KEY_SILENCE_NOTIFS, profile.defaultSilenceNotifications)
         val autoReply = prefs.getBoolean(KEY_AUTO_REPLY, true)
         val autoReplyTemplate = prefs.getString(KEY_AUTO_REPLY_TEMPLATE, DEFAULT_AUTO_REPLY_TEMPLATE) ?: DEFAULT_AUTO_REPLY_TEMPLATE
+        val declineAllCalls = prefs.getBoolean(KEY_DECLINE_ALL_CALLS, false)
         val perProfileMessages = mutableMapOf<FocusProfile, String>()
         for (p in FocusProfile.values()) {
             val msg = prefs.getString("key_auto_reply_profile_${p.name}", null)
@@ -167,7 +176,8 @@ class FocusStateManager private constructor(context: Context) {
                 themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
                 totalShieldedCalls = shieldedCalls,
                 totalShieldedNotifications = shieldedNotifs,
-                sessionStartTimeMillis = null
+                sessionStartTimeMillis = null,
+                declineAllCallsRegardless = declineAllCalls
             )
         }
 
@@ -197,7 +207,8 @@ class FocusStateManager private constructor(context: Context) {
             themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
             totalShieldedCalls = shieldedCalls,
             totalShieldedNotifications = shieldedNotifs,
-            sessionStartTimeMillis = startTime
+            sessionStartTimeMillis = startTime,
+            declineAllCallsRegardless = declineAllCalls
         )
     }
 
@@ -208,6 +219,15 @@ class FocusStateManager private constructor(context: Context) {
     fun isStrictGamingLockdown(): Boolean = _state.value.strictGamingLockdownEnabled
 
     fun isAllowRepeatCallers(): Boolean = _state.value.allowRepeatCallersEnabled
+
+    fun isDeclineAllCallsRegardless(): Boolean = _state.value.declineAllCallsRegardless
+
+    fun setDeclineAllCallsRegardless(enabled: Boolean) {
+        val updated = _state.value.copy(declineAllCallsRegardless = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_DECLINE_ALL_CALLS, enabled).apply()
+        Log.d(TAG, "Decline all calls regardless set to: $enabled")
+    }
 
     fun setAutoDeclineVoipInGameEnabled(enabled: Boolean) {
         val updated = _state.value.copy(autoDeclineVoipInGame = enabled)
@@ -270,7 +290,7 @@ class FocusStateManager private constructor(context: Context) {
                 template
             }
         } catch (_: Exception) {
-            "🛡️ ZenShield: I currently have ${profile.displayName} Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
+            "🛡️ Sentinal: I currently have ${profile.displayName} Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
         }
     }
 
@@ -417,6 +437,9 @@ class FocusStateManager private constructor(context: Context) {
         applyFocusLockScreen(appContext, FocusProfile.GAMING, updated.dimLockScreenEnabled)
         runCatching {
             com.example.services.ZenShieldForegroundService.start(appContext)
+        }
+        runCatching {
+            com.example.services.NotificationGuardService.ensureBound(appContext)
         }
     }
 
@@ -847,7 +870,7 @@ class FocusStateManager private constructor(context: Context) {
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.08f
         }
-        canvas.drawText("ZENSHIELD FOCUS", centerX, height * 0.52f, brandPaint)
+        canvas.drawText("SENTINAL FOCUS", centerX, height * 0.52f, brandPaint)
 
         val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
@@ -890,6 +913,7 @@ class FocusStateManager private constructor(context: Context) {
             .putBoolean(KEY_IS_AUTO_TRIGGERED_GAME, state.isAutoTriggeredByGame)
             .putString(KEY_PREVIOUS_PROFILE_BEFORE_GAME, state.previousProfileBeforeGame.id)
             .putStringSet(KEY_CUSTOM_GAME_PACKAGES, state.customGamePackages)
+            .putBoolean(KEY_DECLINE_ALL_CALLS, state.declineAllCallsRegardless)
 
         if (state.expiresAtMillis != null && state.expiresAtMillis > System.currentTimeMillis() && state.activeProfile != FocusProfile.OFF) {
             editor.putLong(KEY_EXPIRES_AT, state.expiresAtMillis)
@@ -929,7 +953,7 @@ class FocusStateManager private constructor(context: Context) {
         const val FIFTEEN_SECONDS_MS = 15_000L
         const val THREE_MINUTES_MS = 180_000L
         const val THIRTY_MINUTES_MS = 15_000L // 15s cooldown prevents spam while allowing easy testing without Clear Data
-        const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
+        const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ Sentinal: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
 
         private const val KEY_ACTIVE_PROFILE = "key_active_profile"
         private const val KEY_EXPIRES_AT = "key_expires_at"
@@ -958,6 +982,7 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_IS_AUTO_TRIGGERED_GAME = "key_is_auto_game"
         private const val KEY_PREVIOUS_PROFILE_BEFORE_GAME = "key_prev_profile_game"
         private const val KEY_CUSTOM_GAME_PACKAGES = "key_custom_game_packages"
+        private const val KEY_DECLINE_ALL_CALLS = "key_decline_all_calls"
 
         @Volatile
         private var INSTANCE: FocusStateManager? = null

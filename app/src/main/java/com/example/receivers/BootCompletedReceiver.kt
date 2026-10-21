@@ -33,6 +33,13 @@ class BootCompletedReceiver : BroadcastReceiver() {
             Log.d(TAG, "Focus profile is OFF or expired. No restoration required.")
             stateManager.setProfile(FocusProfile.OFF)
         }
+
+        // Restart Game Detection Service if auto game detection is enabled
+        if (currentState.autoGameDetectionEnabled) {
+            runCatching {
+                com.example.services.GameDetectorService.start(context)
+            }
+        }
     }
 
     companion object {

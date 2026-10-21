@@ -159,35 +159,41 @@ class NotificationGuardService : NotificationListenerService() {
             val callerName = extractCallerTitle(sbn)
             Log.d(TAG, "Incoming Cellular call detected from '$callerName' (${sbn.packageName})")
 
-            // 1. Starred Contacts Check
-            val isStarred = if (stateManager.isAllowStarredContacts()) {
-                checkIfStarredContact(applicationContext, callerName)
-            } else {
-                false
-            }
+            val declineAllRegardless = stateManager.isDeclineAllCallsRegardless()
 
-            if (isStarred) {
-                if (isGamingLockdown) {
-                    Log.d(TAG, "Cellular call from Starred Contact '$callerName' blocked due to Strict Gaming Lockdown")
+            if (!declineAllRegardless) {
+                // 1. Starred Contacts Check
+                val isStarred = if (stateManager.isAllowStarredContacts()) {
+                    checkIfStarredContact(applicationContext, callerName)
                 } else {
-                    Log.d(TAG, "Allowing cellular call from Starred Contact: '$callerName'")
-                    return // Let call ring through undisturbed
+                    false
                 }
-            }
 
-            // 2. 3-Minute Repeat Caller Breakthrough
-            val isRepeatBreakthrough = stateManager.isAllowRepeatCallers() &&
-                    !isGamingLockdown &&
-                    stateManager.checkCellularRepeatBreakthrough(callerName)
+                if (isStarred) {
+                    if (isGamingLockdown) {
+                        Log.d(TAG, "Cellular call from Starred Contact '$callerName' blocked due to Strict Gaming Lockdown")
+                    } else {
+                        Log.d(TAG, "Allowing cellular call from Starred Contact: '$callerName'")
+                        return // Let call ring through undisturbed
+                    }
+                }
 
-            if (isRepeatBreakthrough) {
-                Log.d(TAG, "Cellular 3-minute repeat breakthrough confirmed for '$callerName'! Allowing call to ring.")
-                triggerBreakthroughHaptic()
-                return // Let call ring through
+                // 2. 3-Minute Repeat Caller Breakthrough
+                val isRepeatBreakthrough = stateManager.isAllowRepeatCallers() &&
+                        !isGamingLockdown &&
+                        stateManager.checkCellularRepeatBreakthrough(callerName)
+
+                if (isRepeatBreakthrough) {
+                    Log.d(TAG, "Cellular 3-minute repeat breakthrough confirmed for '$callerName'! Allowing call to ring.")
+                    triggerBreakthroughHaptic()
+                    return // Let call ring through
+                }
+            } else {
+                Log.i(TAG, "Decline All Calls Regardless enabled: immediately declining cellular call from '$callerName' with ZERO exceptions")
             }
 
             // 3. Actively Decline Cellular Call at Network/Dialer Level
-            Log.d(TAG, "Actively declining cellular call from '$callerName' under profile ${activeProfile.displayName}")
+            Log.d(TAG, "Actively declining cellular call from '$callerName' under profile ${activeProfile.displayName} (declineAllRegardless=$declineAllRegardless)")
             stateManager.incrementShieldedCall()
 
             // Record in recently bounced list for post-decline missed call suppression (Zero-Trace Cleanup)
@@ -218,19 +224,25 @@ class NotificationGuardService : NotificationListenerService() {
             val sessionKey = buildSessionKey(sbn.packageName, callerName)
             Log.d(TAG, "Incoming VoIP call detected from '$callerName' (${sbn.packageName})")
 
-            // 1. 3-Minute Repeat Caller Logic for VoIP Calls
-            val isRepeatBreakthrough = stateManager.isAllowRepeatCallers() &&
-                    !isGamingLockdown &&
-                    stateManager.checkVoipRepeatBreakthrough(callerName)
+            val declineAllRegardless = stateManager.isDeclineAllCallsRegardless()
 
-            if (isRepeatBreakthrough) {
-                Log.d(TAG, "VoIP 3-minute repeat breakthrough confirmed for '$callerName'! Allowing call to ring.")
-                triggerBreakthroughHaptic()
-                return // Allow call to ring through
+            if (!declineAllRegardless) {
+                // 1. 3-Minute Repeat Caller Logic for VoIP Calls
+                val isRepeatBreakthrough = stateManager.isAllowRepeatCallers() &&
+                        !isGamingLockdown &&
+                        stateManager.checkVoipRepeatBreakthrough(callerName)
+
+                if (isRepeatBreakthrough) {
+                    Log.d(TAG, "VoIP 3-minute repeat breakthrough confirmed for '$callerName'! Allowing call to ring.")
+                    triggerBreakthroughHaptic()
+                    return // Allow call to ring through
+                }
+            } else {
+                Log.i(TAG, "Decline All Calls Regardless enabled: immediately rejecting VoIP call from '$callerName' with ZERO exceptions")
             }
 
             // 2. Programmatically Hang Up VoIP Call
-            Log.d(TAG, "Rejecting VoIP call from '$callerName' under profile ${activeProfile.displayName}")
+            Log.d(TAG, "Rejecting VoIP call from '$callerName' under profile ${activeProfile.displayName} (declineAllRegardless=$declineAllRegardless)")
             stateManager.incrementShieldedCall()
 
             val hangUpSuccessful = attemptProgrammaticHangUp(sbn)

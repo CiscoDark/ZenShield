@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "ZenShield"
+rootProject.name = "Sentinal"
 
 include(":app")

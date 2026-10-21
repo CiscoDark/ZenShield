@@ -428,7 +428,7 @@ fun HeroFocusCard(
 
                     Column {
                         Text(
-                            text = if (isActive) state.activeProfile.displayName else "ZenShield Inactive",
+                            text = if (isActive) state.activeProfile.displayName else "Sentinal Inactive",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
@@ -878,7 +878,7 @@ fun PermissionAlertCard(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
                 Text(
-                    text = "Grant notification policy access to allow ZenShield to toggle system Do Not Disturb automatically.",
+                    text = "Grant notification policy access to allow Sentinal to toggle system Do Not Disturb automatically.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
                 )

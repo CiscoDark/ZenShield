@@ -123,16 +123,16 @@ fun GameDetectionCard(
 
                     Column {
                         Text(
-                            text = "Game Detector & Zero-Airtime Reply",
+                            text = "Auto-Activate Game DND on Launch",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = if (state.autoGameDetectionEnabled) {
-                                if (state.isAutoTriggeredByGame) "🎮 Game active • In lockdown" else "Auto-detector armed"
+                                if (state.isAutoTriggeredByGame) "🎮 Game active • In Gaming DND lockdown" else "Auto-activates Gaming DND on game launch"
                             } else {
-                                "Auto-detection disabled"
+                                "Auto-activation on launch disabled"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = if (state.isAutoTriggeredByGame) {
@@ -211,7 +211,7 @@ private fun UsageAccessAlertBanner(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
                 Text(
-                    text = "Grant Usage Access so ZenShield can detect when games launch in real time.",
+                    text = "Grant Usage Access so Sentinal can detect when games launch in real time.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
                 )
@@ -270,7 +270,7 @@ private fun VoipZeroAirtimeSection(
         }
 
         Text(
-            text = "When incoming VoIP calls (WhatsApp, WhatsApp Business, Telegram, Discord, Messenger) are auto-declined, ZenShield sends the status reply natively through OS RemoteInput in-app chat. Zero carrier charges or airtime used.",
+            text = "When incoming VoIP calls (WhatsApp, WhatsApp Business, Telegram, Discord, Messenger) are auto-declined, Sentinal sends the status reply natively through OS RemoteInput in-app chat. Zero carrier charges or airtime used.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

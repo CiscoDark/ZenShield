@@ -25,6 +25,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -99,6 +100,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,8 +114,14 @@ import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import com.example.ui.AutoReplyCustomMessageBottomSheet
 import com.example.ui.GameDetectionCard
+import com.example.ui.theme.FocusThemePreferences
+import com.example.ui.theme.Typography
 import com.example.ui.theme.ZenShieldTheme
 import kotlinx.coroutines.delay
 
@@ -142,7 +150,9 @@ class MainActivity : ComponentActivity() {
             val activeProfile by stateManager.activeProfileFlow.collectAsState()
             val state by stateManager.state.collectAsState()
 
-            ZenShieldTheme(
+            DynamicTheme(
+                darkTheme = isSystemInDarkTheme(),
+                dynamicColor = state.themePreferences.followSystemWallpaper,
                 activeProfile = activeProfile,
                 preferences = state.themePreferences
             ) {
@@ -159,6 +169,57 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // Re-sync on resume
+    }
+}
+
+/**
+ * DynamicTheme: Composable wrapper in MainActivity utilizing the system's current color scheme
+ * to support Material You design standards (Android 12+ dynamicLightColorScheme / dynamicDarkColorScheme).
+ */
+@Composable
+fun DynamicTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
+    activeProfile: FocusProfile = FocusProfile.OFF,
+    preferences: FocusThemePreferences = FocusThemePreferences(),
+    content: @Composable () -> Unit
+) {
+    val context = LocalContext.current
+
+    // Material You dynamic system color scheme resolution (Android 12+ / API 31+)
+    val dynamicColorScheme: ColorScheme? = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (!preferences.profileTintedAccent || activeProfile == FocusProfile.OFF)) {
+        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } else null
+
+    if (dynamicColorScheme != null) {
+        val finalColorScheme = if (darkTheme && preferences.amoledPureBlack) {
+            dynamicColorScheme.copy(
+                surface = Color.Black,
+                background = Color.Black,
+                surfaceContainerLowest = Color.Black,
+                surfaceContainerLow = Color(0xFF070A0F),
+                surfaceContainer = Color(0xFF0F141E),
+                surfaceContainerHigh = Color(0xFF171E2B),
+                surfaceContainerHighest = Color(0xFF1F2838),
+                surfaceDim = Color.Black
+            )
+        } else {
+            dynamicColorScheme
+        }
+
+        MaterialTheme(
+            colorScheme = finalColorScheme,
+            typography = Typography,
+            content = content
+        )
+    } else {
+        com.example.ui.theme.DynamicTheme(
+            darkTheme = darkTheme,
+            dynamicColor = dynamicColor,
+            activeProfile = activeProfile,
+            preferences = preferences,
+            content = content
+        )
     }
 }
 
@@ -348,6 +409,14 @@ fun ZenShieldDashboardScreen(
                     initiallyExpanded = state.activeProfile == FocusProfile.GAMING
                 ) {
                     ConfigSwitchRow(
+                        title = "Auto-Activate Game Mode DND on Game Launch",
+                        subtitle = "Automatically transitions to Gaming DND whenever any game launches, and restores previous profile on exit",
+                        checked = state.autoGameDetectionEnabled,
+                        onCheckedChange = { stateManager.setAutoGameDetectionEnabled(it) },
+                        testTag = "switch_auto_activate_game_dnd"
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ConfigSwitchRow(
                         title = "Auto-Decline WhatsApp & VoIP Calls in Game",
                         subtitle = "Immediately drops VoIP calls in background during gaming",
                         checked = state.autoDeclineVoipInGame,
@@ -391,6 +460,14 @@ fun ZenShieldDashboardScreen(
                     initiallyExpanded = true
                 ) {
                     ConfigSwitchRow(
+                        title = "Decline All Calls Regardless of Condition",
+                        subtitle = "Zero-tolerance lockdown: automatically drops all incoming cellular and VoIP calls, ignoring starred contacts and repeat callers",
+                        checked = state.declineAllCallsRegardless,
+                        onCheckedChange = { stateManager.setDeclineAllCallsRegardless(it) },
+                        testTag = "switch_decline_all_calls_regardless"
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ConfigSwitchRow(
                         title = "Network-Level Call Rejection (Instant User Busy)",
                         subtitle = "Sends immediate busy signal to tower without ringing",
                         checked = state.networkLevelCallRejection,
@@ -408,16 +485,16 @@ fun ZenShieldDashboardScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ConfigSwitchRow(
                         title = "3-Minute Repeat Caller Breakthrough",
-                        subtitle = "Second call within 180s rings out loud for real emergencies",
-                        checked = state.allowRepeatCallersEnabled,
+                        subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Second call within 180s rings out loud for real emergencies",
+                        checked = state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
                         onCheckedChange = { stateManager.setAllowRepeatCallersEnabled(it) },
                         testTag = "switch_repeat_breakthrough"
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ConfigSwitchRow(
                         title = "Allow Starred Contacts",
-                        subtitle = "Passes priority contacts through cellular & VoIP filters",
-                        checked = state.allowStarredContactsOnly,
+                        subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Passes priority contacts through cellular & VoIP filters",
+                        checked = state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
                         onCheckedChange = { checked ->
                             stateManager.updateProfileSettings(checked, state.blockRepeatedCallers, state.silenceNotifications)
                         },
@@ -488,6 +565,8 @@ fun ZenShieldDashboardScreen(
                         onCheckedChange = { stateManager.setDimLockScreenEnabled(it) },
                         testTag = "switch_dim_lock_screen"
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    InteractiveAppIconPreviewRow()
                 }
             }
 
@@ -658,23 +737,43 @@ fun HeroStatusHeaderCard(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.Transparent,
                         modifier = Modifier.size(52.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = when (activeProfile) {
-                                    FocusProfile.OFF -> Icons.Rounded.Shield
-                                    FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
-                                    FocusProfile.GAMING -> Icons.Rounded.SportsEsports
-                                    FocusProfile.WORK -> Icons.Rounded.Work
-                                    FocusProfile.SLEEP -> Icons.Rounded.Bedtime
-                                },
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(28.dp)
-                            )
+                            if (activeProfile == FocusProfile.OFF) {
+                                Image(
+                                    painter = painterResource(
+                                        if (isSystemInDarkTheme()) R.drawable.sentinal_icon_dark else R.drawable.sentinal_icon_light
+                                    ),
+                                    contentDescription = "Sentinal App Icon",
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                )
+                            } else {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(52.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = when (activeProfile) {
+                                                FocusProfile.OFF -> Icons.Rounded.Shield
+                                                FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
+                                                FocusProfile.GAMING -> Icons.Rounded.SportsEsports
+                                                FocusProfile.WORK -> Icons.Rounded.Work
+                                                FocusProfile.SLEEP -> Icons.Rounded.Bedtime
+                                            },
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -802,7 +901,7 @@ fun HeroStatusHeaderCard(
                 )
             ) {
                 Text(
-                    text = if (isActive) "Deactivate ZenShield" else "Activate Focus Shield",
+                    text = if (isActive) "Deactivate Sentinal" else "Activate Focus Shield",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -1033,6 +1132,135 @@ fun VoipAutoReplyCustomizationCard(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * InteractiveAppIconPreviewRow: Interactive showcase allowing the user to view, test,
+ * and interact with the new Sentinal app icon for both Light Mode (gold sun-moon)
+ * and Dark Mode (cyan crescent moon).
+ */
+@Composable
+fun InteractiveAppIconPreviewRow(
+    modifier: Modifier = Modifier
+) {
+    val isSystemDark = isSystemInDarkTheme()
+    var previewModeIsDark by remember { mutableStateOf(isSystemDark) }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Interactive App Icon",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (previewModeIsDark) "Dark Mode • Cyan Crescent Moon" else "Light Mode • Amber Sun-Moon",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier
+                    .testTag("toggle_icon_preview_btn")
+                    .clickable { previewModeIsDark = !previewModeIsDark }
+            ) {
+                Text(
+                    text = if (previewModeIsDark) "Switch to Light" else "Switch to Dark",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Light mode icon option
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { previewModeIsDark = false }
+                    .padding(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(
+                            width = if (!previewModeIsDark) 2.5.dp else 1.dp,
+                            color = if (!previewModeIsDark) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(18.dp)
+                        )
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.sentinal_icon_light),
+                        contentDescription = "Sentinal Light Mode Icon (Gold Sun-Moon)",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Text(
+                    text = "Light Mode",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (!previewModeIsDark) FontWeight.Bold else FontWeight.Normal,
+                    color = if (!previewModeIsDark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Dark mode icon option
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { previewModeIsDark = true }
+                    .padding(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(
+                            width = if (previewModeIsDark) 2.5.dp else 1.dp,
+                            color = if (previewModeIsDark) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(18.dp)
+                        )
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.sentinal_icon_dark),
+                        contentDescription = "Sentinal Dark Mode Icon (Cyan Crescent Moon)",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Text(
+                    text = "Dark Mode",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (previewModeIsDark) FontWeight.Bold else FontWeight.Normal,
+                    color = if (previewModeIsDark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

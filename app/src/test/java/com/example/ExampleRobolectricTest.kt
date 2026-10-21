@@ -21,7 +21,7 @@ class ExampleRobolectricTest {
     fun `read string from context`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("ZenShield", appName)
+        assertEquals("Sentinal", appName)
     }
 
     @Test
@@ -305,6 +305,40 @@ class ExampleRobolectricTest {
         stateManager.setPerProfileAutoReplyMessage(FocusProfile.GAMING, "")
         val restoredGamingMessage = stateManager.getAutoReplyMessage(FocusProfile.GAMING)
         assertTrue(restoredGamingMessage.contains("Gaming Focus active"))
+    }
+
+    @Test
+    fun `auto activate game mode DND on game launch activates and reverts cleanly`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        stateManager.setAutoGameDetectionEnabled(true)
+        assertTrue(stateManager.state.value.autoGameDetectionEnabled)
+
+        // Simulate game launch
+        stateManager.handleGameLaunched("com.example.game")
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+        assertTrue(stateManager.state.value.isAutoTriggeredByGame)
+
+        // Simulate game exit
+        stateManager.handleGameExited()
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+        assertFalse(stateManager.state.value.isAutoTriggeredByGame)
+    }
+
+    @Test
+    fun `decline all calls regardless option persists and updates state`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setDeclineAllCallsRegardless(true)
+        assertTrue("declineAllCallsRegardless must be true", stateManager.isDeclineAllCallsRegardless())
+        assertTrue("state property must be true", stateManager.state.value.declineAllCallsRegardless)
+
+        stateManager.setDeclineAllCallsRegardless(false)
+        assertFalse("declineAllCallsRegardless must be false", stateManager.isDeclineAllCallsRegardless())
+        assertFalse("state property must be false", stateManager.state.value.declineAllCallsRegardless)
     }
 }
 
