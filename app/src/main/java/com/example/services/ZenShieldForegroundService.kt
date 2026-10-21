@@ -25,6 +25,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -59,7 +61,9 @@ class ZenShieldForegroundService : Service() {
         when (action) {
             ACTION_STOP_FOCUS -> {
                 Log.d(TAG, "Received ACTION_STOP_FOCUS: terminating focus session")
-                stateManager.setProfile(FocusProfile.OFF)
+                if (stateManager.state.value.activeProfile != FocusProfile.OFF) {
+                    stateManager.setProfile(FocusProfile.OFF)
+                }
                 stopForegroundService()
                 return START_NOT_STICKY
             }
@@ -96,15 +100,49 @@ class ZenShieldForegroundService : Service() {
             profile = currentState.activeProfile,
             expiryTime = currentState.expiresAtMillis
         )
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         // Ensure we continuously observe state changes
         startObservingFocusState(stateManager)
+
+        // Start active timer countdown ticker
+        startTimerTicker(stateManager, currentState.expiresAtMillis)
 
         // Ensure notification listener service is bound
         requestListenerRebind()
 
         return START_STICKY
+    }
+
+    private var tickerJob: Job? = null
+
+    private fun startTimerTicker(stateManager: FocusStateManager, expiryTime: Long?) {
+        tickerJob?.cancel()
+        if (expiryTime == null || expiryTime <= 0L) {
+            tickerJob = null
+            return
+        }
+
+        tickerJob = serviceScope.launch {
+            while (isActive) {
+                val remainingMs = expiryTime - System.currentTimeMillis()
+                if (remainingMs <= 0L) {
+                    Log.i(TAG, "Active timer countdown expired. Reverting profile to FocusProfile.OFF")
+                    stateManager.setProfile(FocusProfile.OFF)
+                    stopForegroundService()
+                    break
+                }
+                delay(1000L.coerceAtMost(remainingMs))
+            }
+        }
     }
 
     private fun startObservingFocusState(stateManager: FocusStateManager) {
@@ -116,6 +154,7 @@ class ZenShieldForegroundService : Service() {
                     Log.d(TAG, "Focus profile changed to OFF. Stopping foreground service and removing notification.")
                     stopForegroundService()
                 } else {
+                    startTimerTicker(stateManager, state.expiresAtMillis)
                     val notification = buildLiveFocusNotification(
                         profile = state.activeProfile,
                         expiryTime = state.expiresAtMillis
@@ -213,8 +252,8 @@ class ZenShieldForegroundService : Service() {
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
 
         if (isTimed && expiryTime != null) {
             builder.setWhen(expiryTime)
@@ -246,10 +285,11 @@ class ZenShieldForegroundService : Service() {
             val channel = NotificationChannel(
                 LIVE_CHANNEL_ID,
                 "ZenShield Live Focus Controller",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Displays the interactive Live Focus Controller notification and countdown timer"
                 setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
                 setSound(null, null)
                 enableVibration(false)
             }
@@ -282,6 +322,8 @@ class ZenShieldForegroundService : Service() {
     }
 
     private fun stopForegroundService() {
+        tickerJob?.cancel()
+        tickerJob = null
         observerJob?.cancel()
         observerJob = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -296,6 +338,8 @@ class ZenShieldForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        tickerJob?.cancel()
+        tickerJob = null
         observerJob?.cancel()
         observerJob = null
         if (wakeLock?.isHeld == true) {

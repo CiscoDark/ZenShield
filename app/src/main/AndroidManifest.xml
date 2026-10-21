@@ -2,10 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Focus, Telephony, and Notification Permissions -->
+    <!-- Focus, Contacts, and Notification Permissions -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -50,15 +48,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Call Screening Bouncer Service -->
-        <service
-            android:name=".services.CellularBouncerService"
-            android:permission="android.permission.BIND_SCREENING_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.telecom.CallScreeningService" />
-            </intent-filter>
-        </service>
+
 
         <!-- Notification Guard Listener Service -->
         <service
@@ -108,14 +98,7 @@
             android:name=".services.GameDetectorService"
             android:exported="false" />
 
-        <!-- OEM Dialer Fallback Receiver -->
-        <receiver
-            android:name=".receivers.CallStateFallbackReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.PHONE_STATE" />
-            </intent-filter>
-        </receiver>
+
 
         <!-- Boot Completed & System Replaced Watchdog Receiver -->
         <receiver

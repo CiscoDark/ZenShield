@@ -2,7 +2,6 @@ package com.example
 
 import android.Manifest
 import android.app.NotificationManager
-import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -58,11 +57,17 @@ import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -96,6 +101,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
@@ -106,11 +112,18 @@ import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
+import com.example.ui.AutoReplyCustomMessageBottomSheet
 import com.example.ui.GameDetectionCard
 import com.example.ui.theme.ZenShieldTheme
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        // Notification permission updated
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,11 +131,19 @@ class MainActivity : ComponentActivity() {
 
         val stateManager = FocusStateManager.getInstance(applicationContext)
 
+        // Automatic Permission Audit on Launch (Android 13+ POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         setContent {
+            val activeProfile by stateManager.activeProfileFlow.collectAsState()
             val state by stateManager.state.collectAsState()
 
             ZenShieldTheme(
-                activeProfile = state.activeProfile,
+                activeProfile = activeProfile,
                 preferences = state.themePreferences
             ) {
                 Surface(
@@ -134,6 +155,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-sync on resume
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -143,12 +169,13 @@ fun ZenShieldDashboardScreen(
     modifier: Modifier = Modifier
 ) {
     val state by stateManager.state.collectAsState()
+    val activeProfile by stateManager.activeProfileFlow.collectAsState()
     val context = LocalContext.current
     var showWhitelistSheet by remember { mutableStateOf(false) }
     var showGamePickerSheet by remember { mutableStateOf(false) }
+    var showAutoReplySheet by remember { mutableStateOf(false) }
 
-    // System Permissions & Roles Trackers
-    var hasCallScreeningRole by remember { mutableStateOf(checkCallScreeningRole(context)) }
+    // System Permissions & Access Trackers
     var hasNotificationListener by remember { mutableStateOf(checkNotificationListenerAccess(context)) }
     var hasDndAccess by remember { mutableStateOf(stateManager.isNotificationPolicyAccessGranted()) }
     var hasRuntimePermissions by remember { mutableStateOf(checkRuntimePermissions(context)) }
@@ -160,7 +187,6 @@ fun ZenShieldDashboardScreen(
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                hasCallScreeningRole = checkCallScreeningRole(context)
                 hasNotificationListener = checkNotificationListenerAccess(context)
                 hasDndAccess = stateManager.isNotificationPolicyAccessGranted()
                 hasRuntimePermissions = checkRuntimePermissions(context)
@@ -174,13 +200,6 @@ fun ZenShieldDashboardScreen(
         }
     }
 
-    // Activity Result Launchers
-    val roleLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        hasCallScreeningRole = checkCallScreeningRole(context)
-    }
-
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -189,7 +208,7 @@ fun ZenShieldDashboardScreen(
 
     // Dynamic Header Background animated color
     val animatedHeaderColor by animateColorAsState(
-        targetValue = when (state.activeProfile) {
+        targetValue = when (activeProfile) {
             FocusProfile.OFF -> MaterialTheme.colorScheme.surfaceContainer
             FocusProfile.DO_NOT_DISTURB -> MaterialTheme.colorScheme.primaryContainer
             FocusProfile.GAMING -> MaterialTheme.colorScheme.secondaryContainer
@@ -276,12 +295,14 @@ fun ZenShieldDashboardScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 HeroStatusHeaderCard(
                     state = state,
+                    activeProfile = activeProfile,
                     headerBgColor = animatedHeaderColor,
                     onDurationSelected = { duration ->
                         stateManager.setDuration(duration)
                     },
                     onToggleFocus = {
-                        if (state.activeProfile == FocusProfile.OFF) {
+                        stateManager.resetSessionCaches()
+                        if (activeProfile == FocusProfile.OFF) {
                             stateManager.setProfile(FocusProfile.DO_NOT_DISTURB, state.durationOption)
                         } else {
                             stateManager.setProfile(FocusProfile.OFF)
@@ -300,8 +321,9 @@ fun ZenShieldDashboardScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalProfileCarousel(
-                    activeProfile = state.activeProfile,
+                    activeProfile = activeProfile,
                     onProfileSelected = { profile ->
+                        stateManager.resetSessionCaches()
                         stateManager.setProfile(profile, state.durationOption)
                     }
                 )
@@ -404,11 +426,20 @@ fun ZenShieldDashboardScreen(
                 }
             }
 
-            // Card 3: Smart Breakthrough & Auto-Reply
+            // 3. VoIP Auto-Reply Customization Card (ElevatedCard)
+            item {
+                VoipAutoReplyCustomizationCard(
+                    state = state,
+                    stateManager = stateManager,
+                    onOpenCustomizeSheet = { showAutoReplySheet = true }
+                )
+            }
+
+            // Card 3: Smart Breakthrough & Emergency Scanner
             item {
                 ExpandableConfigCard(
-                    title = "Smart Breakthrough & Auto-Reply",
-                    subtitle = "Scans critical OTPs and dispatches direct replies",
+                    title = "Smart Breakthrough & Emergency Scanner",
+                    subtitle = "Scans critical OTPs, ride drivers, and emergency text alerts",
                     icon = Icons.Rounded.Notifications,
                     initiallyExpanded = false
                 ) {
@@ -418,14 +449,6 @@ fun ZenShieldDashboardScreen(
                         checked = state.smartUrgentBreakthroughEnabled,
                         onCheckedChange = { stateManager.setSmartUrgentBreakthroughEnabled(it) },
                         testTag = "switch_smart_urgent"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Auto-Reply to Chats with 'Reply URGENT' Instructions",
-                        subtitle = "Sends automatic response on WhatsApp/Telegram with 30m cooldown",
-                        checked = state.autoReplyEnabled,
-                        onCheckedChange = { stateManager.setAutoReplyEnabled(it) },
-                        testTag = "switch_auto_reply"
                     )
                 }
             }
@@ -468,32 +491,17 @@ fun ZenShieldDashboardScreen(
                 }
             }
 
-            // Card 5: System Permissions & Role Status (Interactive Checklist)
+            // Card 5: System Permissions Checklist Card
             item {
                 ExpandableConfigCard(
-                    title = "System Permissions & Role Status",
+                    title = "System Permissions Checklist",
                     subtitle = "Interactive checklist for hardware and Android services",
                     icon = Icons.Rounded.Security,
                     initiallyExpanded = true
                 ) {
                     PermissionStatusRow(
-                        title = "Call Screening Role",
-                        description = "Required to intercept and reject cellular calls at network level",
-                        isGranted = hasCallScreeningRole,
-                        actionLabel = "Set Role",
-                        onAction = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val roleManager = context.getSystemService(Context.ROLE_SERVICE) as? RoleManager
-                                roleManager?.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING)?.let { intent ->
-                                    roleLauncher.launch(intent)
-                                }
-                            }
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    PermissionStatusRow(
                         title = "Notification Listener Access",
-                        description = "Required to reject WhatsApp/VoIP calls and auto-reply",
+                        description = "Required to intercept and actively decline cellular and VoIP calls and auto-reply.",
                         isGranted = hasNotificationListener,
                         actionLabel = "Enable",
                         onAction = {
@@ -504,7 +512,7 @@ fun ZenShieldDashboardScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     PermissionStatusRow(
-                        title = "DND Policy Access",
+                        title = "DND Interruption Policy",
                         description = "Allows syncing Android interruption filter with focus profiles",
                         isGranted = hasDndAccess,
                         actionLabel = "Grant",
@@ -517,15 +525,11 @@ fun ZenShieldDashboardScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     PermissionStatusRow(
                         title = "Runtime Permissions",
-                        description = "Contacts lookup, call state, and push notifications",
+                        description = "Starred contacts lookup and push notifications",
                         isGranted = hasRuntimePermissions,
                         actionLabel = "Grant",
                         onAction = {
-                            val perms = mutableListOf(
-                                Manifest.permission.READ_CONTACTS,
-                                Manifest.permission.ANSWER_PHONE_CALLS,
-                                Manifest.permission.READ_PHONE_STATE
-                            )
+                            val perms = mutableListOf(Manifest.permission.READ_CONTACTS)
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 perms.add(Manifest.permission.POST_NOTIFICATIONS)
                             }
@@ -590,17 +594,25 @@ fun ZenShieldDashboardScreen(
             onDismissRequest = { showGamePickerSheet = false }
         )
     }
+
+    if (showAutoReplySheet) {
+        AutoReplyCustomMessageBottomSheet(
+            stateManager = stateManager,
+            onDismissRequest = { showAutoReplySheet = false }
+        )
+    }
 }
 
 @Composable
 fun HeroStatusHeaderCard(
     state: FocusSessionState,
+    activeProfile: FocusProfile = state.activeProfile,
     headerBgColor: Color,
     onDurationSelected: (DurationOption) -> Unit,
     onToggleFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isActive = state.activeProfile != FocusProfile.OFF
+    val isActive = activeProfile != FocusProfile.OFF
 
     var remainingSeconds by remember(state.expiresAtMillis, isActive) {
         mutableLongStateOf(
@@ -652,7 +664,7 @@ fun HeroStatusHeaderCard(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = when (state.activeProfile) {
+                                imageVector = when (activeProfile) {
                                     FocusProfile.OFF -> Icons.Rounded.Shield
                                     FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
                                     FocusProfile.GAMING -> Icons.Rounded.SportsEsports
@@ -668,13 +680,13 @@ fun HeroStatusHeaderCard(
 
                     Column {
                         Text(
-                            text = if (isActive) state.activeProfile.displayName else "Shield Inactive",
+                            text = if (isActive) activeProfile.displayName else "Shield Inactive",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (isActive) state.activeProfile.subtitle else "Tap a profile below to activate focus",
+                            text = if (isActive) activeProfile.subtitle else "Tap a profile below to activate focus",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -856,6 +868,170 @@ fun HorizontalProfileCarousel(
                         fontWeight = FontWeight.Bold,
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VoipAutoReplyCustomizationCard(
+    state: FocusSessionState,
+    stateManager: FocusStateManager,
+    onOpenCustomizeSheet: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    ElevatedCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("voip_auto_reply_card"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Notifications,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+
+                    Column {
+                        Text(
+                            text = "VoIP Auto-Reply Customization",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Auto-replies via in-app RemoteInput when VoIP calls are bounced",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = state.autoReplyEnabled,
+                    onCheckedChange = { stateManager.setAutoReplyEnabled(it) },
+                    modifier = Modifier.testTag("voip_auto_reply_switch")
+                )
+            }
+
+            AnimatedVisibility(visible = state.autoReplyEnabled) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Custom Auto-Reply Message",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        FilledTonalButton(
+                            onClick = onOpenCustomizeSheet,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.testTag("btn_customize_auto_reply_sheet")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Per-Profile",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = state.autoReplyMessageTemplate,
+                        onValueChange = { stateManager.setAutoReplyMessageTemplate(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("voip_auto_reply_textfield"),
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        placeholder = { Text("Enter auto-reply text (%s = active focus name)...") }
+                    )
+
+                    val previewProfile = if (state.activeProfile != FocusProfile.OFF) state.activeProfile else FocusProfile.GAMING
+                    val currentMessage = stateManager.getAutoReplyMessage(previewProfile)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Live Dispatch Preview: $currentMessage",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        )
+
+                        TextButton(
+                            onClick = { stateManager.resetSessionCaches() },
+                            modifier = Modifier.testTag("btn_reset_auto_reply_cooldowns")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Reset Cache",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1056,24 +1232,18 @@ fun PermissionStatusRow(
     }
 }
 
-private fun checkCallScreeningRole(context: Context): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val roleManager = context.getSystemService(Context.ROLE_SERVICE) as? RoleManager
-        roleManager?.isRoleHeld(RoleManager.ROLE_CALL_SCREENING) == true
-    } else {
-        false
-    }
-}
-
 private fun checkNotificationListenerAccess(context: Context): Boolean {
     return NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 }
 
 private fun checkRuntimePermissions(context: Context): Boolean {
     val contactsGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
-    val answerCallsGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED
-    val phoneStateGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
-    return contactsGranted && answerCallsGranted && phoneStateGranted
+    val notifsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    } else {
+        true
+    }
+    return contactsGranted && notifsGranted
 }
 
 private fun checkBatteryOptimizationExemption(context: Context): Boolean {

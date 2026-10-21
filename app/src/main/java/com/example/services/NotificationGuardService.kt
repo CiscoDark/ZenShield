@@ -1,20 +1,30 @@
 package com.example.services
 
+import android.Manifest
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.ContactsContract
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.core.FocusProfile
 import com.example.core.FocusStateManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -41,26 +51,49 @@ data class PendingVoipReply(
 )
 
 /**
- * NotificationGuardService
+ * NotificationGuardService (Role-Free Call Bouncer & Notification Guard)
  *
  * Provides:
- * 1. VoIP call rejection (WhatsApp, Telegram, Messenger, Instagram, Discord).
- * 2. 3-Minute Repeat Caller Breakthrough for VoIP calls.
+ * 1. Role-Free Cellular Call Bouncing: Intercepts incoming cellular calls via the Notification
+ *    Listener, checks Starred Contacts & 3-Minute Repeat Caller breakthrough, actively drops
+ *    the call via the system Decline action, and executes zero-trace status bar cleanup.
+ * 2. VoIP Call Bouncing (WhatsApp, Telegram, Messenger, Instagram, Discord).
  * 3. Two-Stage In-App VoIP Auto-Reply Engine with Zero-Airtime Guardrail (no cellular SMS,
  *    strictly native RemoteInput messaging).
  * 4. Per-profile whitelisting, Smart Urgent Scanner (OTPs, 2FA, logistics), and notification suppression.
  */
 class NotificationGuardService : NotificationListenerService() {
 
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
     // Cache of active RemoteInput sessions by "$packageName|$normalizedTitle"
     private val remoteInputSessions = ConcurrentHashMap<String, RemoteInputSession>()
 
-    // Trackers for VoIP calls declined within the last 30 seconds awaiting post-decline missed-call notification
+    // Trackers for VoIP calls declined awaiting post-decline missed-call notification
     private val pendingVoipReplies = ConcurrentHashMap<String, PendingVoipReply>()
+
+    // Trackers for recently declined cellular calls for post-decline missed call suppression (Zero-Trace Cleanup)
+    private val recentlyBouncedCellularCalls = ConcurrentHashMap<String, Long>()
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
+
+        serviceScope.launch {
+            try {
+                handleNotificationPostedInternal(sbn)
+            } catch (e: Exception) {
+                Log.e(TAG, "Unhandled exception in NotificationGuard coroutine: ${e.message}", e)
+            }
+        }
+    }
+
+    private fun handleNotificationPostedInternal(sbn: StatusBarNotification) {
+
+        // Suppress our own notifications from triggering shield loops
+        if (sbn.packageName == packageName) {
+            return
+        }
 
         val stateManager = FocusStateManager.getInstance(applicationContext)
         val activeProfile = stateManager.getActiveProfile()
@@ -68,29 +101,51 @@ class NotificationGuardService : NotificationListenerService() {
         // Cache any valid RemoteInput from messaging or VoIP notifications for Stage 1 pre-warming
         cacheRemoteInputFromNotification(sbn)
 
-        // Evict expired pending replies (> 30 seconds old)
+        // Evict expired pending replies (> 30 seconds old) and bounced calls (> 20 seconds old)
         evictExpiredPendingReplies()
+        evictExpiredBouncedCalls()
 
         // If Focus Shield is OFF, do not intervene
         if (activeProfile == FocusProfile.OFF) {
             return
         }
 
-        // Do not suppress ongoing foreground services that are NOT incoming calls
         val isVoipCall = isIncomingVoipCall(sbn)
-        if (sbn.isOngoing && !isVoipCall) {
-            return
-        }
+        val isCellularCall = isIncomingCellularCall(sbn)
 
-        // Suppress our own notifications from triggering shield loops
-        if (sbn.packageName == packageName) {
+        // Do not suppress ongoing foreground services that are NOT incoming calls
+        if (sbn.isOngoing && !isVoipCall && !isCellularCall) {
             return
         }
 
         val isGamingLockdown = (activeProfile == FocusProfile.GAMING && stateManager.isStrictGamingLockdown())
 
         // =========================================================================
-        // STAGE 2: Post-Decline Missed-Call Catch & Auto-Reply Execution
+        // ZERO-TRACE CLEANUP: Clean up dialer post-decline missed call notifications
+        // =========================================================================
+        if (isDialerMissedCall(sbn)) {
+            val callerName = extractCallerTitle(sbn)
+            val normalizedCaller = normalizeTitle(callerName)
+            val lastBounced = recentlyBouncedCellularCalls[normalizedCaller]
+                ?: recentlyBouncedCellularCalls.entries.firstOrNull { (k, _) ->
+                    k.contains(normalizedCaller) || normalizedCaller.contains(k)
+                }?.value
+
+            val now = System.currentTimeMillis()
+            if (lastBounced != null && (now - lastBounced) <= RECENT_BOUNCE_WINDOW_MS) {
+                Log.i(TAG, "Zero-Trace Cleanup: Suppressing post-decline missed call notification for '$callerName'")
+                stateManager.incrementShieldedNotification()
+                try {
+                    cancelNotification(sbn.key)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error cancelling post-decline missed call: ${e.message}")
+                }
+                return
+            }
+        }
+
+        // =========================================================================
+        // STAGE 2: VoIP Post-Decline Missed-Call Catch & Auto-Reply Execution
         // =========================================================================
         val handledPostDecline = handlePostDeclineVoipCatch(sbn, activeProfile, stateManager)
         if (handledPostDecline) {
@@ -98,7 +153,65 @@ class NotificationGuardService : NotificationListenerService() {
         }
 
         // =========================================================================
-        // STAGE 1: VoIP & Third-Party App Call Rejection (WhatsApp, Telegram, Discord)
+        // CELLULAR CALL INTERCEPTION & BOUNCER (Role-Free Notification Listener)
+        // =========================================================================
+        if (isCellularCall) {
+            val callerName = extractCallerTitle(sbn)
+            Log.d(TAG, "Incoming Cellular call detected from '$callerName' (${sbn.packageName})")
+
+            // 1. Starred Contacts Check
+            val isStarred = if (stateManager.isAllowStarredContacts()) {
+                checkIfStarredContact(applicationContext, callerName)
+            } else {
+                false
+            }
+
+            if (isStarred) {
+                if (isGamingLockdown) {
+                    Log.d(TAG, "Cellular call from Starred Contact '$callerName' blocked due to Strict Gaming Lockdown")
+                } else {
+                    Log.d(TAG, "Allowing cellular call from Starred Contact: '$callerName'")
+                    return // Let call ring through undisturbed
+                }
+            }
+
+            // 2. 3-Minute Repeat Caller Breakthrough
+            val isRepeatBreakthrough = stateManager.isAllowRepeatCallers() &&
+                    !isGamingLockdown &&
+                    stateManager.checkCellularRepeatBreakthrough(callerName)
+
+            if (isRepeatBreakthrough) {
+                Log.d(TAG, "Cellular 3-minute repeat breakthrough confirmed for '$callerName'! Allowing call to ring.")
+                triggerBreakthroughHaptic()
+                return // Let call ring through
+            }
+
+            // 3. Actively Decline Cellular Call at Network/Dialer Level
+            Log.d(TAG, "Actively declining cellular call from '$callerName' under profile ${activeProfile.displayName}")
+            stateManager.incrementShieldedCall()
+
+            // Record in recently bounced list for post-decline missed call suppression (Zero-Trace Cleanup)
+            val normalizedCaller = normalizeTitle(callerName)
+            recentlyBouncedCellularCalls[normalizedCaller] = System.currentTimeMillis()
+
+            val hangUpSuccessful = attemptProgrammaticHangUp(sbn)
+            Log.d(TAG, "Cellular call programmatic hang up executed (success=$hangUpSuccessful)")
+
+            // 4. Zero-Trace Cleanup: Immediately cancel/snooze incoming notification so screen stays clean
+            try {
+                cancelNotification(sbn.key)
+                Log.d(TAG, "Zero-trace cleanup: cancelled ringing notification ${sbn.key}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not cancel ringing notification: ${e.message}, falling back to snooze")
+                try {
+                    snoozeNotification(sbn.key, 60_000L)
+                } catch (_: Exception) {}
+            }
+            return
+        }
+
+        // =========================================================================
+        // VOIP CALL REJECTION (WhatsApp, Telegram, Messenger, Instagram, Discord)
         // =========================================================================
         if (isVoipCall) {
             val callerName = extractCallerTitle(sbn)
@@ -126,7 +239,7 @@ class NotificationGuardService : NotificationListenerService() {
             if (stateManager.isAutoReplyEnabled() && stateManager.shouldSendAutoReply(callerName)) {
                 val cachedSession = remoteInputSessions[sessionKey]
                 if (cachedSession != null && (System.currentTimeMillis() - cachedSession.timestamp) < CACHE_MAX_AGE_MS) {
-                    val message = stateManager.getAutoReplyMessage(activeProfile)
+                    val message = FocusStateManager.getAutoReplyMessage(applicationContext)
                     val replied = sendCachedRemoteInputReply(cachedSession, message)
                     if (replied) {
                         stateManager.recordAutoReplySent(callerName)
@@ -145,14 +258,14 @@ class NotificationGuardService : NotificationListenerService() {
             }
 
             if (!hangUpSuccessful) {
-                // Fallback: Snooze or cancel notification immediately to suppress popup over screen
+                // Fallback: Cancel notification cleanly to suppress heads-up popup
                 try {
-                    snoozeNotification(sbn.key, 60_000L)
-                    Log.d(TAG, "VoIP call fallback snooze applied for ${sbn.key}")
+                    cancelNotification(sbn.key)
+                    Log.d(TAG, "VoIP call fallback cancel applied for ${sbn.key}")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to snooze VoIP call notification: ${e.message}")
+                    Log.w(TAG, "Failed to cancel VoIP call notification: ${e.message}, falling back to short snooze")
                     try {
-                        cancelNotification(sbn.key)
+                        snoozeNotification(sbn.key, 60_000L)
                     } catch (_: Exception) {}
                 }
             }
@@ -160,7 +273,7 @@ class NotificationGuardService : NotificationListenerService() {
         }
 
         // =========================================================================
-        // Regular Notifications: Whitelist, Smart Scanner, Auto-Reply, and Snooze
+        // REGULAR NOTIFICATIONS: Whitelist, Smart Scanner, Auto-Reply, and Snooze
         // =========================================================================
 
         // A. Whitelisted Package Check (Per-Profile Whitelist)
@@ -194,15 +307,15 @@ class NotificationGuardService : NotificationListenerService() {
             }
         }
 
-        // D. Silent Hold / Snooze for 1 Hour (3,600,000 ms)
+        // D. Zero-Trace Immediate Dismissal
         stateManager.incrementShieldedNotification()
         try {
-            snoozeNotification(sbn.key, 3_600_000L)
-            Log.d(TAG, "Snoozed notification from ${sbn.packageName} for 1 hour")
+            cancelNotification(sbn.key)
+            Log.d(TAG, "Zero-trace cleanup: cancelled shielded notification from ${sbn.packageName}")
         } catch (e: Exception) {
-            Log.w(TAG, "Could not snooze notification, attempting cancelNotification: ${e.message}")
+            Log.w(TAG, "Could not cancel notification, falling back to temporary snooze: ${e.message}")
             try {
-                cancelNotification(sbn.key)
+                snoozeNotification(sbn.key, 60_000L)
             } catch (_: Exception) {}
         }
     }
@@ -237,7 +350,7 @@ class NotificationGuardService : NotificationListenerService() {
         Log.i(TAG, "Stage 2 Post-Decline catch matched for '${pending.callerTitle}' on ${sbn.packageName}")
 
         var replied = false
-        val message = stateManager.getAutoReplyMessage(pending.activeProfile)
+        val message = FocusStateManager.getAutoReplyMessage(applicationContext)
 
         // 1. Try RemoteInput on this newly posted notification first
         val actions = sbn.notification?.actions
@@ -295,6 +408,49 @@ class NotificationGuardService : NotificationListenerService() {
         return true
     }
 
+    private fun checkIfStarredContact(context: Context, callerIdentifier: String): Boolean {
+        if (callerIdentifier.isBlank()) return false
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Cannot check starred contact without READ_CONTACTS permission")
+            return false
+        }
+
+        return try {
+            // 1. Phone number lookup
+            val digitsOnly = callerIdentifier.replace(Regex("[^0-9+]"), "").trim()
+            if (digitsOnly.length >= 3) {
+                val phoneUri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(digitsOnly))
+                val projection = arrayOf(ContactsContract.PhoneLookup.STARRED)
+                context.contentResolver.query(phoneUri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val starredIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.STARRED)
+                        if (starredIdx != -1 && cursor.getInt(starredIdx) == 1) {
+                            return true
+                        }
+                    }
+                }
+            }
+
+            // 2. Display Name lookup
+            val contactUri = ContactsContract.Contacts.CONTENT_URI
+            val contactProj = arrayOf(ContactsContract.Contacts.STARRED)
+            val selection = "${ContactsContract.Contacts.DISPLAY_NAME} = ? OR ${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} = ?"
+            val selectionArgs = arrayOf(callerIdentifier.trim(), callerIdentifier.trim())
+            context.contentResolver.query(contactUri, contactProj, selection, selectionArgs, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val starredIdx = cursor.getColumnIndex(ContactsContract.Contacts.STARRED)
+                    if (starredIdx != -1 && cursor.getInt(starredIdx) == 1) {
+                        return true
+                    }
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking contact starred status for '$callerIdentifier': ${e.message}")
+            false
+        }
+    }
+
     private fun cacheRemoteInputFromNotification(sbn: StatusBarNotification) {
         val actions = sbn.notification?.actions ?: return
         val title = sbn.notification?.extras?.getString(Notification.EXTRA_TITLE)
@@ -349,6 +505,17 @@ class NotificationGuardService : NotificationListenerService() {
         }
     }
 
+    private fun evictExpiredBouncedCalls() {
+        val now = System.currentTimeMillis()
+        val iterator = recentlyBouncedCellularCalls.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now - entry.value > RECENT_BOUNCE_WINDOW_MS) {
+                iterator.remove()
+            }
+        }
+    }
+
     private fun buildSessionKey(packageName: String, title: String): String {
         return "${packageName.lowercase(Locale.ROOT)}|${normalizeTitle(title)}"
     }
@@ -357,8 +524,68 @@ class NotificationGuardService : NotificationListenerService() {
         return title.trim().lowercase(Locale.ROOT)
     }
 
+    private fun isKnownVoipApp(packageName: String): Boolean {
+        val pkg = packageName.lowercase(Locale.ROOT)
+        return KNOWN_VOIP_PACKAGES.any { pkg.contains(it) }
+    }
+
+    private fun isIncomingCellularCall(sbn: StatusBarNotification): Boolean {
+        val notification = sbn.notification ?: return false
+        val pkg = sbn.packageName.lowercase(Locale.ROOT)
+
+        // Cannot be our own app or known VoIP apps
+        if (pkg == packageName.lowercase(Locale.ROOT) || isKnownVoipApp(pkg)) {
+            return false
+        }
+
+        val isDialerPkg = KNOWN_DIALER_PACKAGES.any { pkg.contains(it) }
+        val isCallCategory = notification.category == Notification.CATEGORY_CALL
+
+        if (isDialerPkg || isCallCategory) {
+            // Check for call action buttons (Decline / Reject / Answer / Dismiss) or fullScreenIntent
+            val hasCallActions = notification.actions?.any { action ->
+                val title = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+                title.contains("decline") || title.contains("reject") || title.contains("answer") || title.contains("dismiss")
+            } == true
+
+            if (notification.fullScreenIntent != null || hasCallActions) {
+                return true
+            }
+
+            if (isCallCategory) {
+                val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+                val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+                val content = "$title $text".lowercase(Locale.ROOT)
+                if (CALL_KEYWORDS.any { content.contains(it) }) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun isDialerMissedCall(sbn: StatusBarNotification): Boolean {
+        val pkg = sbn.packageName.lowercase(Locale.ROOT)
+        val isDialerPkg = KNOWN_DIALER_PACKAGES.any { pkg.contains(it) }
+        val notification = sbn.notification ?: return false
+
+        val isMissedCategory = notification.category == Notification.CATEGORY_MISSED_CALL
+        val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+        val content = "$title $text".lowercase(Locale.ROOT)
+        val hasMissedText = content.contains("missed call") || content.contains("missed voice call")
+
+        return (isDialerPkg || isMissedCategory) && (isMissedCategory || hasMissedText)
+    }
+
     private fun isIncomingVoipCall(sbn: StatusBarNotification): Boolean {
         val notification = sbn.notification ?: return false
+        val pkg = sbn.packageName.lowercase(Locale.ROOT)
+
+        if (!isKnownVoipApp(pkg)) {
+            return false
+        }
 
         // Category check
         if (notification.category == Notification.CATEGORY_CALL) {
@@ -370,26 +597,17 @@ class NotificationGuardService : NotificationListenerService() {
             return true
         }
 
-        // Known VoIP packages inspection
-        val pkg = sbn.packageName.lowercase(Locale.ROOT)
-        val isKnownVoipApp = KNOWN_VOIP_PACKAGES.any { pkg.contains(it) }
-        if (isKnownVoipApp) {
-            val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
-            val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
-            val content = "$title $text".lowercase(Locale.ROOT)
+        val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+        val content = "$title $text".lowercase(Locale.ROOT)
 
-            val hasCallText = CALL_KEYWORDS.any { content.contains(it) }
-            val hasCallActions = notification.actions?.any { action ->
-                val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
-                actionTitle.contains("decline") || actionTitle.contains("reject") || actionTitle.contains("answer")
-            } == true
+        val hasCallText = CALL_KEYWORDS.any { content.contains(it) }
+        val hasCallActions = notification.actions?.any { action ->
+            val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+            actionTitle.contains("decline") || actionTitle.contains("reject") || actionTitle.contains("answer")
+        } == true
 
-            if (hasCallText || hasCallActions) {
-                return true
-            }
-        }
-
-        return false
+        return hasCallText || hasCallActions
     }
 
     private fun extractCallerTitle(sbn: StatusBarNotification): String {
@@ -423,12 +641,12 @@ class NotificationGuardService : NotificationListenerService() {
             if (isDeclineTitle || isDeclineSemantic) {
                 try {
                     action.actionIntent?.send()
-                    Log.d(TAG, "Successfully fired VoIP hangup actionIntent: '$title'")
+                    Log.d(TAG, "Successfully fired decline/hangup actionIntent: '$title'")
                     return true
                 } catch (e: PendingIntent.CanceledException) {
-                    Log.w(TAG, "Action intent canceled while hanging up VoIP call", e)
+                    Log.w(TAG, "Action intent canceled while hanging up call", e)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Error executing VoIP hang up action", e)
+                    Log.w(TAG, "Error executing hang up action", e)
                 }
             }
         }
@@ -458,7 +676,7 @@ class NotificationGuardService : NotificationListenerService() {
             val remoteInputs = action.remoteInputs ?: continue
             for (remoteInput in remoteInputs) {
                 if (remoteInput.allowFreeFormInput || remoteInput.resultKey != null) {
-                    val message = stateManager.getAutoReplyMessage(activeProfile)
+                    val message = FocusStateManager.getAutoReplyMessage(applicationContext)
 
                     val replyBundle = Bundle().apply {
                         putCharSequence(remoteInput.resultKey, message)
@@ -508,11 +726,38 @@ class NotificationGuardService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         Log.i(TAG, "NotificationGuardService disconnected")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                requestRebind(android.content.ComponentName(this, NotificationGuardService::class.java))
+                Log.i(TAG, "NotificationGuardService requested automatic rebind on disconnect")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to rebind on disconnect: ${e.message}")
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
     }
 
     companion object {
         private const val TAG = "NotificationGuard"
+
+        fun ensureBound(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    val component = android.content.ComponentName(context, NotificationGuardService::class.java)
+                    requestRebind(component)
+                    Log.d(TAG, "Requested rebind for NotificationGuardService")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not request rebind for NotificationGuardService: ${e.message}")
+                }
+            }
+        }
+
         private const val PENDING_VOIP_TIMEOUT_MS = 30_000L
+        private const val RECENT_BOUNCE_WINDOW_MS = 20_000L
         private const val CACHE_MAX_AGE_MS = 3_600_000L
 
         private val KNOWN_VOIP_PACKAGES = setOf(
@@ -526,6 +771,18 @@ class NotificationGuardService : NotificationListenerService() {
             "org.thoughtcrime.securesms",
             "com.slack",
             "com.microsoft.teams"
+        )
+
+        private val KNOWN_DIALER_PACKAGES = setOf(
+            "com.google.android.dialer",
+            "com.samsung.android.incallui",
+            "com.android.server.telecom",
+            "com.android.dialer",
+            "com.android.phone",
+            "com.samsung.android.dialer",
+            "com.oneplus.dialer",
+            "com.miui.home",
+            "com.android.incallui"
         )
 
         private val KNOWN_MESSAGING_PACKAGES = setOf(

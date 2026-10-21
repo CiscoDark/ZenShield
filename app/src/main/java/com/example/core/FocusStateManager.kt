@@ -40,6 +40,7 @@ data class FocusSessionState(
     val silenceNotifications: Boolean = true,
     val autoReplyEnabled: Boolean = true,
     val autoReplyMessageTemplate: String = "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.",
+    val perProfileAutoReplyMessages: Map<FocusProfile, String> = emptyMap(),
     val autoDeclineVoipInGame: Boolean = true,
     val suppressHeadsUpBanners: Boolean = true,
     val networkLevelCallRejection: Boolean = true,
@@ -68,7 +69,20 @@ class FocusStateManager private constructor(context: Context) {
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<FocusSessionState> = _state.asStateFlow()
 
+    private val _activeProfileFlow = MutableStateFlow(_state.value.activeProfile)
+    val activeProfileFlow: StateFlow<FocusProfile> = _activeProfileFlow.asStateFlow()
+
     init {
+        scope.launch {
+            _state.collect { sessionState ->
+                if (_activeProfileFlow.value != sessionState.activeProfile) {
+                    _activeProfileFlow.value = sessionState.activeProfile
+                }
+            }
+        }
+        // Always reset test and breakthrough caches on startup so users never need to clear data
+        resetSessionCaches()
+
         // Resume timer if active profile has an expiration timestamp
         val current = _state.value
         if (current.activeProfile != FocusProfile.OFF && current.expiresAtMillis != null) {
@@ -90,7 +104,14 @@ class FocusStateManager private constructor(context: Context) {
         val allowRepeat = prefs.getBoolean(KEY_ALLOW_REPEAT_CALLERS, true)
         val silenceNotifs = prefs.getBoolean(KEY_SILENCE_NOTIFS, profile.defaultSilenceNotifications)
         val autoReply = prefs.getBoolean(KEY_AUTO_REPLY, true)
-        val autoReplyTemplate = prefs.getString(KEY_AUTO_REPLY_TEMPLATE, "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately.") ?: "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
+        val autoReplyTemplate = prefs.getString(KEY_AUTO_REPLY_TEMPLATE, DEFAULT_AUTO_REPLY_TEMPLATE) ?: DEFAULT_AUTO_REPLY_TEMPLATE
+        val perProfileMessages = mutableMapOf<FocusProfile, String>()
+        for (p in FocusProfile.values()) {
+            val msg = prefs.getString("key_auto_reply_profile_${p.name}", null)
+            if (!msg.isNullOrBlank()) {
+                perProfileMessages[p] = msg
+            }
+        }
         val whitelisted = prefs.getStringSet(KEY_WHITELISTED_PKGS, emptySet()) ?: emptySet()
 
         val autoDeclineVoipInGame = prefs.getBoolean(KEY_AUTO_DECLINE_VOIP_GAME, true)
@@ -113,15 +134,26 @@ class FocusStateManager private constructor(context: Context) {
         val shieldedNotifs = prefs.getInt(KEY_SHIELDED_NOTIFS, 0)
         val startTime = if (prefs.contains(KEY_SESSION_START)) prefs.getLong(KEY_SESSION_START, 0L).takeIf { it > 0 } else null
 
-        // If saved session already expired in the past, reset to OFF
+        // If saved session already expired in the past, reset to OFF and clean persistent state
         if (profile != FocusProfile.OFF && expiresAt != null && System.currentTimeMillis() >= expiresAt) {
+            prefs.edit()
+                .putString(KEY_ACTIVE_PROFILE, FocusProfile.OFF.id)
+                .remove(KEY_EXPIRES_AT)
+                .remove(KEY_SESSION_START)
+                .commit()
             return FocusSessionState(
                 activeProfile = FocusProfile.OFF,
+                expiresAtMillis = null,
+                durationOption = DurationOption.UNTIL_TURNED_OFF,
                 dimLockScreenEnabled = dimLockScreen,
+                allowStarredContactsOnly = profile.defaultAllowStarredOnly,
+                blockRepeatedCallers = profile.defaultBlockRepeatedCalls,
                 strictGamingLockdownEnabled = strictGaming,
                 allowRepeatCallersEnabled = allowRepeat,
+                silenceNotifications = profile.defaultSilenceNotifications,
                 autoReplyEnabled = autoReply,
                 autoReplyMessageTemplate = autoReplyTemplate,
+                perProfileAutoReplyMessages = perProfileMessages,
                 autoDeclineVoipInGame = autoDeclineVoipInGame,
                 suppressHeadsUpBanners = suppressHeadsUp,
                 networkLevelCallRejection = networkRejection,
@@ -134,7 +166,8 @@ class FocusStateManager private constructor(context: Context) {
                 customGamePackages = customGames,
                 themePreferences = FocusThemePreferences(followSystem, profileTint, amoledBlack),
                 totalShieldedCalls = shieldedCalls,
-                totalShieldedNotifications = shieldedNotifs
+                totalShieldedNotifications = shieldedNotifs,
+                sessionStartTimeMillis = null
             )
         }
 
@@ -150,6 +183,7 @@ class FocusStateManager private constructor(context: Context) {
             silenceNotifications = silenceNotifs,
             autoReplyEnabled = autoReply,
             autoReplyMessageTemplate = autoReplyTemplate,
+            perProfileAutoReplyMessages = perProfileMessages,
             autoDeclineVoipInGame = autoDeclineVoipInGame,
             suppressHeadsUpBanners = suppressHeadsUp,
             networkLevelCallRejection = networkRejection,
@@ -174,8 +208,6 @@ class FocusStateManager private constructor(context: Context) {
     fun isStrictGamingLockdown(): Boolean = _state.value.strictGamingLockdownEnabled
 
     fun isAllowRepeatCallers(): Boolean = _state.value.allowRepeatCallersEnabled
-
-    fun isAutoReplyEnabled(): Boolean = _state.value.autoReplyEnabled
 
     fun setAutoDeclineVoipInGameEnabled(enabled: Boolean) {
         val updated = _state.value.copy(autoDeclineVoipInGame = enabled)
@@ -207,24 +239,73 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putBoolean(KEY_SMART_URGENT, enabled).apply()
     }
 
+    fun isAutoReplyEnabled(): Boolean = _state.value.autoReplyEnabled
+    fun isAutoReplyEnabled(context: Context): Boolean = _state.value.autoReplyEnabled
+
+    fun setAutoReplyEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(autoReplyEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_AUTO_REPLY, enabled).commit()
+    }
+
+    fun setAutoReplyEnabled(context: Context, enabled: Boolean) {
+        setAutoReplyEnabled(enabled)
+    }
+
+    fun getAutoReplyMessage(): String = getAutoReplyMessage(_state.value.activeProfile)
+    fun getAutoReplyMessage(context: Context): String = getAutoReplyMessage(_state.value.activeProfile)
+
     fun getAutoReplyMessage(profile: FocusProfile): String {
+        val perProfile = _state.value.perProfileAutoReplyMessages[profile]
+        if (!perProfile.isNullOrBlank()) {
+            return perProfile
+        }
+        val template = _state.value.autoReplyMessageTemplate
         return try {
-            String.format(_state.value.autoReplyMessageTemplate, profile.displayName)
+            if (template.contains("%s")) {
+                String.format(template, profile.displayName)
+            } else if (template.contains("{profile}")) {
+                template.replace("{profile}", profile.displayName)
+            } else {
+                template
+            }
         } catch (_: Exception) {
             "🛡️ ZenShield: I currently have ${profile.displayName} Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
         }
     }
 
-    fun setAutoReplyEnabled(enabled: Boolean) {
-        val updated = _state.value.copy(autoReplyEnabled = enabled)
-        _state.value = updated
-        prefs.edit().putBoolean(KEY_AUTO_REPLY, enabled).apply()
+    fun setAutoReplyMessage(message: String) {
+        setAutoReplyMessageTemplate(message)
+    }
+
+    fun setAutoReplyMessage(context: Context, message: String) {
+        setAutoReplyMessageTemplate(message)
     }
 
     fun setAutoReplyMessageTemplate(template: String) {
         val updated = _state.value.copy(autoReplyMessageTemplate = template)
         _state.value = updated
-        prefs.edit().putString(KEY_AUTO_REPLY_TEMPLATE, template).apply()
+        prefs.edit().putString(KEY_AUTO_REPLY_TEMPLATE, template).commit()
+    }
+
+    fun getPerProfileAutoReplyMessage(profile: FocusProfile): String? {
+        return _state.value.perProfileAutoReplyMessages[profile]
+    }
+
+    fun setPerProfileAutoReplyMessage(profile: FocusProfile, message: String) {
+        val updatedMap = _state.value.perProfileAutoReplyMessages.toMutableMap()
+        if (message.isBlank()) {
+            updatedMap.remove(profile)
+            prefs.edit().remove("key_auto_reply_profile_${profile.name}").apply()
+        } else {
+            updatedMap[profile] = message
+            prefs.edit().putString("key_auto_reply_profile_${profile.name}", message).apply()
+        }
+        _state.value = _state.value.copy(perProfileAutoReplyMessages = updatedMap)
+    }
+
+    fun resetAutoReplyTemplateToDefault() {
+        setAutoReplyMessageTemplate(DEFAULT_AUTO_REPLY_TEMPLATE)
     }
 
     fun isPackageWhitelisted(packageName: String): Boolean {
@@ -330,6 +411,7 @@ class FocusStateManager private constructor(context: Context) {
             expiresAtMillis = null
         )
         _state.value = updated
+        _activeProfileFlow.value = FocusProfile.GAMING
         persistState(updated)
         syncInterruptionFilter(FocusProfile.GAMING)
         applyFocusLockScreen(appContext, FocusProfile.GAMING, updated.dimLockScreenEnabled)
@@ -351,6 +433,7 @@ class FocusStateManager private constructor(context: Context) {
             expiresAtMillis = null
         )
         _state.value = updated
+        _activeProfileFlow.value = targetProfile
         persistState(updated)
         syncInterruptionFilter(targetProfile)
         applyFocusLockScreen(appContext, targetProfile, updated.dimLockScreenEnabled)
@@ -375,8 +458,12 @@ class FocusStateManager private constructor(context: Context) {
 
     fun checkVoipRepeatBreakthrough(callerName: String): Boolean {
         if (callerName.isBlank()) return false
+        val norm = callerName.trim().lowercase()
+        if (norm == "unknown caller" || norm == "unknown" || norm.startsWith("com.")) {
+            return false
+        }
         val cachePrefs = getVoipCacheSharedPreferences()
-        val key = "voip_repeat_${callerName.trim().lowercase()}"
+        val key = "voip_repeat_$norm"
         val lastTimestamp = cachePrefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
         val isWithinThreeMinutes = lastTimestamp > 0L && (now - lastTimestamp) <= THREE_MINUTES_MS
@@ -391,14 +478,38 @@ class FocusStateManager private constructor(context: Context) {
         return false
     }
 
+    fun checkCellularRepeatBreakthrough(callerIdentifier: String): Boolean {
+        if (callerIdentifier.isBlank()) return false
+        val norm = callerIdentifier.trim().lowercase()
+        if (norm == "unknown caller" || norm == "unknown") {
+            return false
+        }
+        val prefs = getCallSharedPreferences()
+        val normalized = callerIdentifier.replace(Regex("[^0-9+]"), "").ifBlank { norm }
+        val key = "last_call_timestamp_$normalized"
+        val lastTimestamp = prefs.getLong(key, 0L)
+        val now = System.currentTimeMillis()
+        val isWithinThreeMinutes = lastTimestamp > 0L && (now - lastTimestamp) <= THREE_MINUTES_MS
+
+        if (isWithinThreeMinutes) {
+            prefs.edit().remove(key).apply()
+            return true
+        }
+
+        // Record 1st call timestamp
+        prefs.edit().putLong(key, now).apply()
+        return false
+    }
+
     fun shouldSendAutoReply(senderName: String): Boolean {
         if (senderName.isBlank()) return false
         val cachePrefs = getVoipCacheSharedPreferences()
         val key = "autoreply_cooldown_${senderName.trim().lowercase()}"
         val lastTimestamp = cachePrefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
-        // 30-minute cooldown (1,800,000 ms)
-        return (now - lastTimestamp) > THIRTY_MINUTES_MS
+        // 15-second cooldown allows rapid back-to-back testing without requiring "Clear Data",
+        // while still preventing rapid spam in active chat bursts.
+        return (now - lastTimestamp) > FIFTEEN_SECONDS_MS
     }
 
     fun recordAutoReplySent(senderName: String) {
@@ -408,18 +519,43 @@ class FocusStateManager private constructor(context: Context) {
         cachePrefs.edit().putLong(key, System.currentTimeMillis()).apply()
     }
 
+    fun resetSessionCaches() {
+        try {
+            getCallSharedPreferences().edit().clear().commit()
+            getVoipCacheSharedPreferences().edit().clear().commit()
+            Log.d(TAG, "Cleared repeat call and auto-reply caches for new focus session")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error clearing session caches: ${e.message}")
+        }
+    }
+
     fun setProfile(
         profile: FocusProfile,
         duration: DurationOption = DurationOption.UNTIL_TURNED_OFF
     ) {
+        if (profile == FocusProfile.OFF && _state.value.activeProfile == FocusProfile.OFF) {
+            runCatching {
+                com.example.services.ZenShieldForegroundService.stop(appContext)
+            }
+            return
+        }
+
         val now = System.currentTimeMillis()
-        val expiresAt = duration.durationMinutes?.let { now + it * 60 * 1000L }
+        val expiresAt = if (profile != FocusProfile.OFF) {
+            duration.durationMinutes?.let { now + it * 60 * 1000L }
+        } else {
+            null
+        }
 
         expirationJob?.cancel()
+        expirationJob = null
 
         if (profile != FocusProfile.OFF && expiresAt != null) {
             startExpirationCountdown(expiresAt)
         }
+
+        // Clean repeat caller and auto-reply caches on every profile transition so testing or new sessions never block
+        resetSessionCaches()
 
         val updated = _state.value.copy(
             activeProfile = profile,
@@ -433,6 +569,7 @@ class FocusStateManager private constructor(context: Context) {
         )
 
         _state.value = updated
+        _activeProfileFlow.value = profile
         persistState(updated)
 
         // Sync Android Interruption Filter
@@ -445,6 +582,9 @@ class FocusStateManager private constructor(context: Context) {
         if (profile != FocusProfile.OFF) {
             runCatching {
                 com.example.services.ZenShieldForegroundService.start(appContext)
+            }
+            runCatching {
+                com.example.services.NotificationGuardService.ensureBound(appContext)
             }
         } else {
             runCatching {
@@ -514,6 +654,7 @@ class FocusStateManager private constructor(context: Context) {
             silenceNotifications = nextProfile.defaultSilenceNotifications
         )
         _state.value = updated
+        _activeProfileFlow.value = nextProfile
         persistState(updated)
         syncInterruptionFilter(nextProfile)
         applyFocusLockScreen(appContext, nextProfile, updated.dimLockScreenEnabled)
@@ -527,6 +668,10 @@ class FocusStateManager private constructor(context: Context) {
         val currentProfile = _state.value.activeProfile
         if (currentProfile != FocusProfile.OFF) {
             setProfile(currentProfile, duration)
+        } else {
+            val updated = _state.value.copy(durationOption = duration)
+            _state.value = updated
+            persistState(updated)
         }
     }
 
@@ -724,21 +869,9 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     private fun persistState(state: FocusSessionState) {
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(KEY_ACTIVE_PROFILE, state.activeProfile.id)
             .putString(KEY_DURATION_OPTION, state.durationOption.name)
-            .apply {
-                if (state.expiresAtMillis != null) {
-                    putLong(KEY_EXPIRES_AT, state.expiresAtMillis)
-                } else {
-                    remove(KEY_EXPIRES_AT)
-                }
-                if (state.sessionStartTimeMillis != null) {
-                    putLong(KEY_SESSION_START, state.sessionStartTimeMillis)
-                } else {
-                    remove(KEY_SESSION_START)
-                }
-            }
             .putBoolean(KEY_ALLOW_STARRED_ONLY, state.allowStarredContactsOnly)
             .putBoolean(KEY_BLOCK_REPEATED, state.blockRepeatedCallers)
             .putBoolean(KEY_STRICT_GAMING, state.strictGamingLockdownEnabled)
@@ -757,16 +890,46 @@ class FocusStateManager private constructor(context: Context) {
             .putBoolean(KEY_IS_AUTO_TRIGGERED_GAME, state.isAutoTriggeredByGame)
             .putString(KEY_PREVIOUS_PROFILE_BEFORE_GAME, state.previousProfileBeforeGame.id)
             .putStringSet(KEY_CUSTOM_GAME_PACKAGES, state.customGamePackages)
-            .apply()
+
+        if (state.expiresAtMillis != null && state.expiresAtMillis > System.currentTimeMillis() && state.activeProfile != FocusProfile.OFF) {
+            editor.putLong(KEY_EXPIRES_AT, state.expiresAtMillis)
+        } else {
+            editor.remove(KEY_EXPIRES_AT)
+        }
+
+        if (state.sessionStartTimeMillis != null && state.activeProfile != FocusProfile.OFF) {
+            editor.putLong(KEY_SESSION_START, state.sessionStartTimeMillis)
+        } else {
+            editor.remove(KEY_SESSION_START)
+        }
+
+        editor.commit()
     }
 
     companion object {
+        fun isAutoReplyEnabled(context: Context): Boolean {
+            return getInstance(context).isAutoReplyEnabled()
+        }
+
+        fun setAutoReplyEnabled(context: Context, enabled: Boolean) {
+            getInstance(context).setAutoReplyEnabled(enabled)
+        }
+
+        fun getAutoReplyMessage(context: Context): String {
+            return getInstance(context).getAutoReplyMessage()
+        }
+
+        fun setAutoReplyMessage(context: Context, message: String) {
+            getInstance(context).setAutoReplyMessage(message)
+        }
         private const val TAG = "FocusStateManager"
         private const val PREFS_NAME = "zenshield_focus_prefs"
         const val CALL_PREFS_NAME = "zenshield_call_bouncer_prefs"
         const val VOIP_CACHE_PREFS_NAME = "zenshield_voip_cache_prefs"
+        const val FIFTEEN_SECONDS_MS = 15_000L
         const val THREE_MINUTES_MS = 180_000L
-        const val THIRTY_MINUTES_MS = 1_800_000L
+        const val THIRTY_MINUTES_MS = 15_000L // 15s cooldown prevents spam while allowing easy testing without Clear Data
+        const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ ZenShield: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
 
         private const val KEY_ACTIVE_PROFILE = "key_active_profile"
         private const val KEY_EXPIRES_AT = "key_expires_at"

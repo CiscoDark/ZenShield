@@ -5,7 +5,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.core.DurationOption
 import com.example.core.FocusProfile
 import com.example.core.FocusStateManager
-import com.example.services.CellularBouncerService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -54,12 +53,12 @@ class ExampleRobolectricTest {
         // Immediate second call (30 seconds later): within 3 minutes
         val callTwoTime = now + 30_000L
         val lastTimestamp = callPrefs.getLong(key, 0L)
-        val isBreakthrough = (callTwoTime - lastTimestamp) <= CellularBouncerService.THREE_MINUTES_MS
+        val isBreakthrough = (callTwoTime - lastTimestamp) <= FocusStateManager.THREE_MINUTES_MS
         assertTrue("Second call within 30s should qualify as breakthrough", isBreakthrough)
 
         // Repeat caller beyond 3 minutes (e.g. 4 minutes later)
         val callThreeTime = now + 240_000L
-        val isExpired = (callThreeTime - lastTimestamp) > CellularBouncerService.THREE_MINUTES_MS
+        val isExpired = (callThreeTime - lastTimestamp) > FocusStateManager.THREE_MINUTES_MS
         assertTrue("Call after 4 minutes should exceed 3-minute window", isExpired)
     }
 
@@ -267,6 +266,45 @@ class ExampleRobolectricTest {
 
         stateManager.setProfile(FocusProfile.OFF)
         assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+    }
+
+    @Test
+    fun `users can edit custom auto reply message template and placeholder formatting`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val customTemplate = "Hey! I am currently studying in %s mode. Text me URGENT if needed."
+        stateManager.setAutoReplyMessageTemplate(customTemplate)
+
+        assertEquals(customTemplate, stateManager.state.value.autoReplyMessageTemplate)
+        val formatted = stateManager.getAutoReplyMessage(FocusProfile.WORK)
+        assertTrue(formatted.contains("Work mode"))
+
+        // Reset to default
+        stateManager.resetAutoReplyTemplateToDefault()
+        assertEquals(FocusStateManager.DEFAULT_AUTO_REPLY_TEMPLATE, stateManager.state.value.autoReplyMessageTemplate)
+    }
+
+    @Test
+    fun `users can set dedicated per-profile custom auto reply message overrides`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val gamingCustomMessage = "🎮 In a tournament right now! Do not call unless life or death."
+        stateManager.setPerProfileAutoReplyMessage(FocusProfile.GAMING, gamingCustomMessage)
+
+        // Gaming should return the exact custom message
+        assertEquals(gamingCustomMessage, stateManager.getAutoReplyMessage(FocusProfile.GAMING))
+
+        // Work should still use the universal template
+        val workMessage = stateManager.getAutoReplyMessage(FocusProfile.WORK)
+        assertFalse(workMessage.contains("tournament"))
+        assertTrue(workMessage.contains("Work"))
+
+        // Clear override
+        stateManager.setPerProfileAutoReplyMessage(FocusProfile.GAMING, "")
+        val restoredGamingMessage = stateManager.getAutoReplyMessage(FocusProfile.GAMING)
+        assertTrue(restoredGamingMessage.contains("Gaming Focus active"))
     }
 }
 
