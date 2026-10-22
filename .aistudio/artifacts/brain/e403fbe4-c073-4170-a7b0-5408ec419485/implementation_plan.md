@@ -1,64 +1,85 @@
-# Sentinal — Material 3 Expressive Design Upgrade Plan
+# Sentinal — Zero-Floor Timer Deactivation, Multi-Surface Auto-Reply Toggle & 3-Minute Cooldown
 
-## 1. Visual & Interaction Philosophy
-We will upgrade **Sentinal** to a full **Material 3 Expressive** interface that pairs tactile shape morphing, bouncy spring physics, and high-contrast editorial typography with profile-reactive color palettes:
+This update guarantees that timed Focus Shield sessions immediately deactivate at `00:00` without ever ticking into negative numbers, introduces one-tap **Declined Call Auto-Reply ON/OFF** controls across the Command Center, Live Notification Shade, and Rules tab, and sets the per-caller auto-reply cooldown to **3 minutes (180 seconds)**.
 
-- **Dynamic Shape Morphing**: Interactive cards, Bento profile tiles, duration chips, and primary action buttons dynamically morph their corner radii and proportions based on selection and press states (transitioning smoothly between sculpted squircles, asymmetric expressive containers, and full pills).
-- **Bouncy Spring Motion System**: All state transitions—including profile switching, shield activation, telemetry counter updates, and navigation tab changes—are driven by expressive spring physics (`dampingRatio = Spring.DampingRatioLowBouncy` and `Spring.DampingRatioMediumBouncy`) instead of linear tween curves.
-- **Editorial Typography & Scannable Hierarchy**: Oversized `Plus Jakarta Sans` display headers and high-contrast `JetBrains Mono` live telemetry readouts create clear focal points on the Hero Shield Console and Weekly Analytics views.
-- **Profile-Reactive Aura & Surface Tinting**: Tonal surface containers, glowing borders, and multi-stop radial/linear gradients adapt smoothly to the active Focus profile (**Gaming**, **Do Not Disturb**, **Work**, **Sleep**, or **Standby**), while respecting Material You dynamic color and AMOLED Pure Black modes.
+## User Review & Critical Decisions
+
+> [!IMPORTANT]
+> The following product decisions were confirmed during interactive clarification and govern this implementation:
+
+- **Confirmed Decision 1 — Auto-Reply Toggle Placement**: The Declined Call Auto-Reply ON/OFF toggle will be accessible and synchronized in real time across **all three surfaces**: the **Shield Command Center** (Hero card & Live HUD preview), the **Live Notification Shade** (interactive action pill), and the **Rules Tab** (`Declined Call Auto-Reply` card).
+- **Confirmed Decision 2 — 3-Minute Cooldown Scope**: The **3-minute (`180,000 ms`) cooldown** applies strictly to **declined call auto-replies** per caller, preventing repeated auto-reply spam while still declining incoming calls according to the active Focus Shield profile.
 
 ---
 
-## 2. Architecture & Expressive Component Flow
+## 1. Overview & Core Concept
 
-```text
-+-------------------------------------------------------------------------+
-|                    Material 3 Expressive Theme Engine                   |
-|  - ExpressiveShapes token scale (sculpted squircles <-> pill radii)     |
-|  - ExpressiveMotion spring specs (bouncy spatial & color transitions)   |
-|  - Profile-Reactive Tonal Palettes (Gaming / DND / Work / Sleep)        |
-+------------------------------------+------------------------------------+
-                                     |
-         +---------------------------+---------------------------+
-         |                           |                           |
-         v                           v                           v
-+-----------------------+   +-----------------------+   +-----------------------+
-| Expressive Hero &     |   | Morphing Bento Grid   |   | Floating Expressive   |
-| Telemetry Cards       |   | & Control Pills       |   | Pill Toolbar          |
-| - Animated corner     |   | - 2x2 profile tiles   |   | - Elevated capsule    |
-|   morphing on active  |   |   morph from 26dp     |   |   docked above nav    |
-|   shield state        |   |   squircle to 42dp    |   |   bar insets          |
-| - Breathing radial    |   |   expressive pill     |   | - Expanding spring    |
-|   aura & spring       |   | - Spring scale &      |   |   pill indicator with |
-|   toggle button       |   |   border luminance    |   |   icon + active label |
-+-----------------------+   +-----------------------+   +-----------------------+
+- **What It Does**:
+  1. **Guaranteed `00:00` Auto-Deactivation & Non-Negative Timer Clamp**: Eliminates negative countdown displays (`-00:01 left`) in both the Android notification shade and in-app UI by clamping all remaining-time calculations to a strict zero floor (`>= 0L`), replacing unbounded SystemUI `Chronometer` negative ticking with clamped live formatting + `setTimeoutAfter(remainingMs)`, and enforcing immediate `FocusProfile.OFF` deactivation the instant any timer reaches `00:00`.
+  2. **Synchronized Auto-Reply ON/OFF Control**: Gives users explicit control over whether declined calls trigger an automated reply message or are declined completely silently, toggleable with one tap from the Command Center, the Live Notification Shade, or the Rules tab.
+  3. **3-Minute Auto-Reply Cooldown**: Reduces the per-caller auto-reply cooldown from 30 minutes to **3 minutes (`180,000 ms`)**, matching the 3-minute repeat-caller emergency window.
+- **Target Audience / Persona**: Mobile gamers, deep-work professionals, and privacy-conscious users who want predictable timed focus sessions and instant control over whether callers receive automated text replies.
+- **Key Value**: Timed sessions end cleanly on the exact second without negative timer artifacts, and users can switch between "Decline + Auto-Reply" and "Silent Call Bouncer" from anywhere.
+
+---
+
+## 2. User Experience & Visual Design
+
+- **Key User Flows**:
+  1. **Timed Focus Expiration (`00:00` Auto-Shutoff)**:
+     - When a user starts a timed Focus session (via preset chips `45m`, `1h`, `2h`, the `5m–8h` custom slider, or `+15m`/`-15m` pills), the live countdown ticks down second-by-second.
+     - If the user taps `-15m` when 15 minutes or less remain, or when the countdown naturally reaches `00:00`, Focus Shield immediately transitions to `FocusProfile.OFF`, triggers the `FOCUS_DEACTIVATED` spring haptic waveform, restores the system interruption filter, and removes the Live Notification from the shade—never displaying `-00:01`.
+  2. **Toggling Auto-Reply Across Surfaces**:
+     - **Command Center**: Inside the Hero Status Header Card (and the Live Notification HUD Preview card), an expressive pill row lets the user toggle **Call Auto-Reply (`ON` / `OFF`)** with bouncy corner morphing and tactile spring haptics.
+     - **Live Notification Shade**: The expanded Live Notification HUD includes a dedicated **`Reply: ON` / `Reply: OFF`** pill button (`ACTION_TOGGLE_AUTO_REPLY`) that toggles auto-reply in-place and updates the shade subtitle immediately (`"Call Auto-Reply ON (3m Cooldown)"` vs. `"Silent Call Bouncer • Auto-Reply OFF"`).
+     - **Rules Tab**: The `Declined Call Auto-Reply` card displays the master switch, custom message editor, and updated **3-Minute Cooldown** badge.
+  3. **3-Minute Per-Caller Auto-Reply Cooldown**:
+     - When `autoReplyEnabled` is `true` and an incoming call is declined, Sentinal checks if an auto-reply was sent to that caller within the last **3 minutes (`180,000 ms`)**. If not, it dispatches the profile auto-reply and records the timestamp; subsequent declined calls from the same caller within 3 minutes are declined without sending duplicate replies.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Software-Clamped Live Timer vs. Unbounded System `Chronometer` CountDown**
+  - *Chosen Approach*: Clamp all countdown values with `maxOf(0L, expiryTime - now)` and render formatted non-negative `MM:SS` / `HH:MM:SS` strings in the 1-second Foreground Service ticker alongside `NotificationCompat.Builder.setTimeoutAfter(remainingMs)` and multi-layer expiration guards.
+  - *Why*: Android's `RemoteViews.setChronometerCountDown(true)` continues ticking into `-00:01`, `-00:02` on the SystemUI thread if a background coroutine is delayed by even 500ms or if `chronometerBase` is passed. Explicit zero-clamped formatting paired with `setTimeoutAfter` guarantees the user never sees a negative number and the shade notification self-terminates at zero.
+- **Decision 2: Multi-Surface Auto-Reply State Synchronization**
+  - *Chosen Approach*: Bind the Command Center quick-toggle, Live Notification `ACTION_TOGGLE_AUTO_REPLY` PendingIntent, and Rules tab switch to `FocusStateManager.setAutoReplyEnabled(enabled)` / `toggleAutoReply()`.
+  - *Why*: Ensures a single source of truth (`StateFlow<FocusSessionState>`) that immediately refreshes both the Jetpack Compose UI and the pinned RemoteViews notification.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+- **Architecture & Component Diagram**:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                        FocusStateManager (Singleton)                       │
+│  • expiresAtMillis + Zero-Floor Expiration Guard (checkAndExpireIfNeeded)  │
+│  • autoReplyEnabled: Boolean  +  toggleAutoReply()                         │
+│  • AUTO_REPLY_COOLDOWN_MS = 180_000L (3 Minutes)                           │
+└───────────────┬───────────────────────────────┬────────────────────────────┘
+                │                               │
+                ▼                               ▼
+┌───────────────────────────────────┐ ┌──────────────────────────────────────┐
+│    Jetpack Compose UI Surfaces    │ │      Background Services & Shade     │
+│  • HeroStatusHeaderCard           │ │  • ZenShieldForegroundService        │
+│    - Non-negative rolling timer   │ │    - 1s clamped timer + timeoutAfter │
+│    - Auto-Reply Quick Toggle Pill │ │    - ACTION_TOGGLE_AUTO_REPLY pill   │
+│  • LiveNotificationHudPreviewCard │ │  • NotificationGuardService          │
+│    - Reply: ON/OFF pill button    │ │    - Checks checkAndExpireIfNeeded() │
+│  • VoipAutoReplyCustomizationCard │ │    - Checks isAutoReplyEnabled()     │
+│    - Master Switch & 3m Cooldown  │ │    - Enforces 3-min caller cooldown  │
+└───────────────────────────────────┘ └──────────────────────────────────────┘
 ```
 
----
-
-## 3. Core Capabilities & UI Upgrades
-
-### A. Material 3 Expressive Theme & Motion Tokens
-- **Expressive Shape Scale**: Define an explicit M3 Expressive `Shapes` hierarchy (`extraSmall` through `extraLarge`) alongside reusable animated corner-morphing helpers that interpolate corner radii on press and selection.
-- **Expressive Spring Presets**: Centralize bouncy spatial springs (for scale, width expansion, and corner radius morphing) and smooth tonal springs (for container colors, glowing borders, and background gradients).
-- **Editorial Type Scale Refinements**: Enhance display, headline, and monospace telemetry styles with tighter display tracking and bold weight contrast for instant scannability.
-
-### B. Expressive Hero Shield Console & Bento Profile Selector
-- **Morphing Hero Status Card**:
-  - Morphs its outer silhouette and inner status badge geometry when switching between **Standby** and **Active Shield** states.
-  - Features an animated multi-stop aura backdrop, oversized live countdown/elapsed readout, expressive pill metric badges, and a spring-loaded primary action button that morphs shape on activation.
-- **Shape-Morphing 2x2 Bento Profile Grid**:
-  - Each Focus Profile tile (**Gaming**, **DND**, **Work**, **Sleep**) dynamically morphs its corner radius, scale, and tonal elevation when selected—transforming from a structured squircle card into a sculpted expressive pill container with an illuminated accent border and animated status indicator.
-- **Expressive Duration & Simulation Pills**:
-  - Timer preset chips (`15m`, `30m`, `45m`, `1h`, `2h`, `∞`) and simulation triggers morph from compact rounded rectangles into expanded capsules with bouncy spring feedback when selected.
-
-### C. Floating Expressive Pill Toolbar (Bottom Navigation)
-- **Elevated Capsule Container**:
-  - Replace the traditional full-width docked bottom bar with a **Floating Expressive Pill Toolbar** suspended above the system navigation bar (`WindowInsets.navigationBars`), styled with high-contrast tonal surface elevation, subtle glass/border highlights, and a full capsule silhouette.
-- **Morphing Active Tab Indicator**:
-  - Selecting a workspace tab (**Shield**, **Analytics**, **Rules**, **System**) triggers a bouncy spring expansion where the active tab morphs into a vibrant pill housing both the filled icon and label, while inactive tabs remain compact icon targets with full 48dp accessibility touch bounds.
-
-### D. Expressive Analytics, Rules & System Cards
-- **Weekly Shield Analytics & Telemetry**: Upgrade the Weekly Shield Activity chart card, Live Notification HUD Preview card, and Game Detection card with expressive container headers, spring-animated filter pills, and sculpted metric containers.
-- **Rules & System Cards**: Refresh the Call Auto-Reply, Smart Automation, and Permission Diagnostics cards with expressive toggle rows, morphing status chips, and cohesive M3 Expressive surface hierarchy.
+- **Interactive Component & State Mapping**:
+  - **Timer Expiration & Zero-Floor Clamp**:
+    - `FocusStateManager.checkAndExpireIfNeeded()`: Checks if `activeProfile != FocusProfile.OFF && expiresAtMillis != null && System.currentTimeMillis() >= expiresAtMillis`; if true, immediately invokes `setProfile(FocusProfile.OFF)` and returns `true`.
+    - `FocusStateManager.setProfile(profile, duration)`: When activating a profile while `duration == DurationOption.UNTIL_TURNED_OFF`, respects `duration.durationMinutes`; when `setCustomDurationMinutes(minutes)` is used or a timed `DurationOption` is selected, sets `expiresAtMillis` and starts the 500ms-precision expiration loop.
+    - `FocusStateManager.adjustRemainingTime(context, deltaMinutes)`: If subtracting time (`-15m`) brings `currentExpiry + delta <= now`, immediately calls `setProfile(FocusProfile.OFF)` so the shield deactivates cleanly instead of clamping or going negative.
+    - `ZenShieldForegroundService`: Formats remaining time with `maxOf(0L, expiryTime - now)` in `tv_expanded_duration` / `tv_collapsed_duration` when timed (hiding the unbounded countdown `Chronometer` so SystemUI can never render `-00:01`), sets `builder.setTimeoutAfter(remainingMs)`, and calls `setProfile(FocusProfile.OFF)` as soon as `remainingMs <= 0L`.
+  - **Auto-Reply Toggle & 3-Minute Cooldown**:
+    - `FocusStateManager.toggleAutoReply()`: Flips `autoReplyEnabled`, persists to `SharedPreferences`, plays `ExpressiveHaptics.playSpringTap(appContext)`, and triggers `ZenShieldForegroundService.update(appContext)`.
+    - `FocusStateManager.shouldSendAutoReply(senderName)`: Returns `false` if `!isAutoReplyEnabled()`, `false` if `isRecentOutgoingCall(senderName)`, and checks `(now - lastTimestamp) > THREE_MINUTES_MS` (`180_000L`).

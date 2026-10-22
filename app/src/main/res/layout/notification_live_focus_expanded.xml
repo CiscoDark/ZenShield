@@ -74,17 +74,43 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Subtitle Row -->
-    <TextView
-        android:id="@+id/tv_expanded_subtitle"
+    <!-- Subtitle & Interactive Auto-Reply Toggle Row -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:text="Call Auto-Reply ON • Messaging Silenced"
-        android:textColor="#94A3B8"
-        android:textSize="11sp" />
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tv_expanded_subtitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Call Auto-Reply ON (3m Cooldown)"
+            android:textColor="#94A3B8"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btn_toggle_auto_reply"
+            style="@android:style/Widget.DeviceDefault.Button.Borderless"
+            android:layout_width="wrap_content"
+            android:layout_height="26dp"
+            android:background="@drawable/notification_chip_bg"
+            android:minWidth="0dp"
+            android:paddingStart="9dp"
+            android:paddingTop="0dp"
+            android:paddingEnd="9dp"
+            android:paddingBottom="0dp"
+            android:text="Auto-Reply: ON"
+            android:textAllCaps="false"
+            android:textColor="#38EF7D"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+    </LinearLayout>
 
     <!-- Live Progress Bar -->
     <ProgressBar

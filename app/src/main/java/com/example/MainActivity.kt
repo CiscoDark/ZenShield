@@ -950,7 +950,7 @@ private fun ShieldCommandCenterTab(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Hero Status Header Card (with Live Animated Shield Emblem + Custom Duration Slider)
+        // 1. Hero Status Header Card (with Live Animated Shield Emblem + Custom Duration Slider + Auto-Reply Toggle)
         item {
             HeroStatusHeaderCard(
                 state = state,
@@ -966,6 +966,12 @@ private fun ShieldCommandCenterTab(
                 onAdjustMinutes = { deltaMinutes ->
                     ExpressiveHaptics.playSpringTap(context)
                     stateManager.adjustRemainingTime(context, deltaMinutes.toLong())
+                },
+                onToggleAutoReply = {
+                    stateManager.toggleAutoReply()
+                },
+                onTimerExpired = {
+                    stateManager.checkAndExpireIfNeeded()
                 },
                 onToggleFocus = {
                     stateManager.resetSessionCaches()
@@ -1532,8 +1538,9 @@ fun LiveNotificationHudPreviewCard(
 
     LaunchedEffect(isActive, state.expiresAtMillis, state.sessionStartTimeMillis, state.gameExitCountdownSeconds) {
         while (true) {
+            stateManager.checkAndExpireIfNeeded()
             nowMillis = System.currentTimeMillis()
-            delay(1000L)
+            delay(500L)
         }
     }
 
@@ -1570,7 +1577,7 @@ fun LiveNotificationHudPreviewCard(
             val startMs = state.sessionStartTimeMillis ?: (state.expiresAtMillis - 3600_000L)
             val totalSpan = maxOf(60_000L, state.expiresAtMillis - startMs).toFloat()
             val remMs = maxOf(0L, state.expiresAtMillis - nowMillis).toFloat()
-            (remMs / totalSpan).coerceIn(0.05f, 1f)
+            (remMs / totalSpan).coerceIn(0.0f, 1f)
         }
         else -> 1f
     }
@@ -1680,7 +1687,7 @@ fun LiveNotificationHudPreviewCard(
                 }
             }
 
-            // Subtitle & Non-Interactive Gaming Pop-Up Trigger
+            // Subtitle, Interactive Live Shade Auto-Reply Toggle & Gaming Pop-Up Trigger
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1688,47 +1695,75 @@ fun LiveNotificationHudPreviewCard(
             ) {
                 Text(
                     text = if (state.autoReplyEnabled) {
-                        "Call Auto-Reply ON • Messages Silenced"
+                        "Call Auto-Reply ON (3m Cooldown)"
                     } else {
-                        "Silent Call Bouncer • Messages Silenced"
+                        "Silent Call Bouncer • Auto-Reply OFF"
                     },
                     fontSize = 11.sp,
                     color = Color(0xFF94A3B8),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
 
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFF162235),
-                    border = BorderStroke(1.dp, Color(0xFF38EF7D).copy(alpha = 0.5f)),
-                    modifier = Modifier
-                        .clickable {
-                            ExpressiveHaptics.playFocusActivated(context)
-                            GamingModePopupManager.showGamingModeActivatedPopup(
-                                context,
-                                "Gaming HUD Test"
-                            )
-                        }
-                        .testTag("btn_test_gaming_popup")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    Surface(
+                        shape = CircleShape,
+                        color = if (state.autoReplyEnabled) Color(0x2638EF7D) else Color(0xFF1E293B),
+                        border = BorderStroke(
+                            1.dp,
+                            if (state.autoReplyEnabled) Color(0xFF38EF7D) else Color(0xFF475569)
+                        ),
+                        modifier = Modifier
+                            .clickable { stateManager.toggleAutoReply() }
+                            .testTag("btn_hud_toggle_auto_reply")
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.SportsEsports,
-                            contentDescription = null,
-                            tint = Color(0xFF38EF7D),
-                            modifier = Modifier.size(13.dp)
-                        )
                         Text(
-                            text = "Test Gaming Pop-Up",
+                            text = if (state.autoReplyEnabled) "Reply: ON" else "Reply: OFF",
                             fontFamily = JetBrainsMonoFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 10.sp,
-                            color = Color(0xFF38EF7D)
+                            color = if (state.autoReplyEnabled) Color(0xFF38EF7D) else Color(0xFF94A3B8),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                         )
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF162235),
+                        border = BorderStroke(1.dp, Color(0xFF38EF7D).copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .clickable {
+                                ExpressiveHaptics.playFocusActivated(context)
+                                GamingModePopupManager.showGamingModeActivatedPopup(
+                                    context,
+                                    "Gaming HUD Test"
+                                )
+                            }
+                            .testTag("btn_test_gaming_popup")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SportsEsports,
+                                contentDescription = null,
+                                tint = Color(0xFF38EF7D),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "Test Pop-Up",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                color = Color(0xFF38EF7D)
+                            )
+                        }
                     }
                 }
             }
@@ -2009,7 +2044,7 @@ private fun AnalyticsTelemetryTab(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "• Declined Incoming Calls: Automatically dispatches your profile auto-reply message (30-min per-caller cooldown).",
+                        text = "• Declined Incoming Calls: Automatically dispatches your profile auto-reply message when enabled (3-min per-caller cooldown).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2400,6 +2435,8 @@ fun HeroStatusHeaderCard(
     onDurationSelected: (DurationOption) -> Unit,
     onCustomDurationMinutesChanged: (Int) -> Unit = {},
     onAdjustMinutes: (Int) -> Unit = {},
+    onToggleAutoReply: () -> Unit = {},
+    onTimerExpired: () -> Unit = {},
     onToggleFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2415,13 +2452,20 @@ fun HeroStatusHeaderCard(
     }
 
     LaunchedEffect(state.expiresAtMillis, isActive) {
-        if (isActive && state.expiresAtMillis != null) {
+        val exp = state.expiresAtMillis
+        if (isActive && exp != null) {
             while (true) {
-                val rem = maxOf(0L, (state.expiresAtMillis - System.currentTimeMillis()) / 1000L)
-                remainingSeconds = rem
-                if (rem <= 0L) break
-                delay(1000L)
+                val now = System.currentTimeMillis()
+                if (now >= exp) {
+                    remainingSeconds = 0L
+                    onTimerExpired()
+                    break
+                }
+                remainingSeconds = maxOf(0L, (exp - now) / 1000L)
+                delay(250L)
             }
+        } else {
+            remainingSeconds = 0L
         }
     }
 
@@ -2762,6 +2806,73 @@ fun HeroStatusHeaderCard(
                     }
                 }
 
+                // Quick Declined Call Auto-Reply Toggle Row (Accessible directly on Command Center)
+                val autoReplyRowCorner by animateDpAsState(
+                    targetValue = if (state.autoReplyEnabled) 22.dp else 14.dp,
+                    animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                    label = "hero_autoreply_row_corner"
+                )
+                Surface(
+                    shape = RoundedCornerShape(autoReplyRowCorner),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (state.autoReplyEnabled) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggleAutoReply() }
+                        .testTag("hero_auto_reply_toggle_row")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.PhoneCallback,
+                                contentDescription = null,
+                                tint = if (state.autoReplyEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(19.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = "Declined Call Auto-Reply",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (state.autoReplyEnabled) {
+                                        "ON • 3-min per-caller cooldown"
+                                    } else {
+                                        "OFF • Calls declined silently without reply"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = state.autoReplyEnabled,
+                            onCheckedChange = { onToggleAutoReply() },
+                            modifier = Modifier.testTag("switch_command_center_auto_reply")
+                        )
+                    }
+                }
+
                 // Primary Action Button (Morphs corner radius & compresses scale on press)
                 Button(
                     onClick = onToggleFocus,
@@ -3006,14 +3117,32 @@ fun VoipAutoReplyCustomizationCard(
                     }
 
                     Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Declined Call Auto-Reply",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer
+                            ) {
+                                Text(
+                                    text = "3M COOLDOWN",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         Text(
-                            text = "Declined Call Auto-Reply",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Replies strictly to declined incoming calls (never to outgoing calls or regular messages)",
+                            text = "Replies strictly to declined incoming calls with a 3-minute per-caller cooldown (never to outgoing calls or regular messages)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

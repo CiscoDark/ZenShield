@@ -87,11 +87,16 @@ class ZenShieldForegroundService : Service() {
                 Log.d(TAG, "Received ACTION_SUBTRACT_15_MIN: subtracting 15 minutes from session")
                 stateManager.adjustRemainingTime(this, -15)
             }
+            ACTION_TOGGLE_AUTO_REPLY -> {
+                Log.d(TAG, "Received ACTION_TOGGLE_AUTO_REPLY: toggling declined call auto-reply")
+                stateManager.toggleAutoReply()
+            }
             ACTION_UPDATE_NOTIFICATION -> {
                 Log.d(TAG, "Received ACTION_UPDATE_NOTIFICATION: refreshing Live Notification UI")
             }
         }
 
+        stateManager.checkAndExpireIfNeeded()
         val currentState = stateManager.state.value
         if (currentState.activeProfile == FocusProfile.OFF) {
             Log.d(TAG, "Current profile is OFF. Stopping service immediately.")
@@ -124,7 +129,7 @@ class ZenShieldForegroundService : Service() {
 
     /**
      * Runs a continuous 1-second live heartbeat while Focus is active so:
-     * 1. Timed sessions expire cleanly on the exact second and update the progress bar.
+     * 1. Timed sessions expire cleanly on the exact second at 00:00 (never counting negative) and update the progress bar.
      * 2. Game exit 30-second countdown updates live in the notification shade.
      */
     private fun startLiveNotificationTicker(stateManager: FocusStateManager) {
@@ -132,6 +137,11 @@ class ZenShieldForegroundService : Service() {
 
         tickerJob = serviceScope.launch {
             while (isActive) {
+                if (stateManager.checkAndExpireIfNeeded()) {
+                    stopForegroundService()
+                    break
+                }
+
                 val state = stateManager.state.value
                 if (state.activeProfile == FocusProfile.OFF) {
                     stopForegroundService()
@@ -142,14 +152,14 @@ class ZenShieldForegroundService : Service() {
                 if (expiryTime != null && expiryTime > 0L) {
                     val remainingMs = expiryTime - System.currentTimeMillis()
                     if (remainingMs <= 0L) {
-                        Log.i(TAG, "Active timer countdown expired. Reverting profile to FocusProfile.OFF")
+                        Log.i(TAG, "Active timer countdown reached 00:00. Reverting profile to FocusProfile.OFF")
                         stateManager.setProfile(FocusProfile.OFF)
                         stopForegroundService()
                         break
                     }
                 }
 
-                // Push live progress bar / countdown update when timed or during 30s game exit grace
+                // Push live progress bar / clamped countdown update when timed or during 30s game exit grace
                 if (expiryTime != null || state.gameExitCountdownSeconds != null) {
                     publishNotificationUpdate(state, stateManager.weeklyStatsFlow.value)
                 }
@@ -185,6 +195,18 @@ class ZenShieldForegroundService : Service() {
         notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
+    private fun formatNonNegativeCountdown(remainingMillis: Long): String {
+        val clampedSeconds = maxOf(0L, remainingMillis / 1000L)
+        val hours = clampedSeconds / 3600L
+        val minutes = (clampedSeconds % 3600L) / 60L
+        val seconds = clampedSeconds % 60L
+        return if (hours > 0L) {
+            String.format("%02d:%02d:%02d left", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d left", minutes, seconds)
+        }
+    }
+
     private fun buildLiveFocusNotification(
         state: FocusSessionState,
         weeklyStats: WeeklyShieldSummary
@@ -207,17 +229,13 @@ class ZenShieldForegroundService : Service() {
         val sub15PendingIntent = createServicePendingIntent(ACTION_SUBTRACT_15_MIN, 103)
         val add15PendingIntent = createServicePendingIntent(ACTION_ADD_15_MIN, 104)
         val add30PendingIntent = createServicePendingIntent(ACTION_ADD_30_MIN, 105)
+        val toggleAutoReplyPendingIntent = createServicePendingIntent(ACTION_TOGGLE_AUTO_REPLY, 106)
 
-        val isTimed = expiryTime != null && expiryTime > now
-        val remainingMs = if (isTimed && expiryTime != null) (expiryTime - now).coerceAtLeast(0L) else 0L
-        val elapsedMs = ((now - (state.sessionStartTimeMillis ?: now))).coerceAtLeast(0L)
-
-        // Convert wall-clock timestamps to SystemClock.elapsedRealtime() base for RemoteViews Chronometer
-        val chronometerBase = if (isTimed) {
-            SystemClock.elapsedRealtime() + remainingMs
-        } else {
-            SystemClock.elapsedRealtime() - elapsedMs
-        }
+        val isTimed = expiryTime != null
+        val remainingMs = if (expiryTime != null) maxOf(0L, expiryTime - now) else 0L
+        val clampedCountdownText = formatNonNegativeCountdown(remainingMs)
+        val elapsedMs = maxOf(0L, now - (state.sessionStartTimeMillis ?: now))
+        val elapsedChronometerBase = SystemClock.elapsedRealtime() - elapsedMs
 
         // Compute live progress percentage (0..100)
         val graceSeconds = state.gameExitCountdownSeconds
@@ -226,7 +244,7 @@ class ZenShieldForegroundService : Service() {
             isTimed && expiryTime != null -> {
                 val startMillis = state.sessionStartTimeMillis ?: (expiryTime - 3600_000L)
                 val totalSpan = (expiryTime - startMillis).coerceAtLeast(60_000L)
-                ((remainingMs.toFloat() / totalSpan.toFloat()) * 100f).toInt().coerceIn(4, 100)
+                ((remainingMs.toFloat() / totalSpan.toFloat()) * 100f).toInt().coerceIn(0, 100)
             }
             else -> 100
         }
@@ -245,9 +263,9 @@ class ZenShieldForegroundService : Service() {
         }
 
         val ruleSummary = buildString {
-            append(if (state.autoReplyEnabled) "Call Auto-Reply ON" else "Silent Call Bouncer")
+            append(if (state.autoReplyEnabled) "Call Auto-Reply ON (3m Cooldown)" else "Silent Call Bouncer • Reply OFF")
             append(" • ")
-            append(if (state.declineAllCallsRegardless) "Zero-Tolerance Lockdown" else "Messages Silenced")
+            append(if (state.declineAllCallsRegardless) "Zero-Tolerance" else "Alerts Silenced")
         }
 
         // 1. Collapsed Live Notification RemoteViews
@@ -265,19 +283,22 @@ class ZenShieldForegroundService : Service() {
 
             setTextViewText(
                 R.id.tv_subtitle,
-                "• $liveCallsDeclined Calls • $liveAlertsSilenced Alerts"
+                "• $liveCallsDeclined Calls • $liveAlertsSilenced Alerts • ${if (state.autoReplyEnabled) "Reply ON" else "Reply OFF"}"
             )
 
-            setViewVisibility(R.id.chrono_timer, View.VISIBLE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                setChronometerCountDown(R.id.chrono_timer, isTimed)
+            if (isTimed) {
+                // Use explicit software-clamped TextView so countdown can never tick into negative numbers
+                setViewVisibility(R.id.chrono_timer, View.GONE)
+                setViewVisibility(R.id.tv_collapsed_duration, View.VISIBLE)
+                setTextViewText(R.id.tv_collapsed_duration, clampedCountdownText)
+            } else {
+                setViewVisibility(R.id.tv_collapsed_duration, View.GONE)
+                setViewVisibility(R.id.chrono_timer, View.VISIBLE)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    setChronometerCountDown(R.id.chrono_timer, false)
+                }
+                setChronometer(R.id.chrono_timer, elapsedChronometerBase, "%s", true)
             }
-            setChronometer(
-                R.id.chrono_timer,
-                chronometerBase,
-                if (isTimed) "%s left" else "%s",
-                true
-            )
 
             setProgressBar(R.id.pb_collapsed_progress, 100, progressPercent, false)
 
@@ -290,6 +311,16 @@ class ZenShieldForegroundService : Service() {
             setTextViewText(R.id.tv_expanded_title, modeTitle)
             setTextViewText(R.id.tv_expanded_subtitle, ruleSummary)
 
+            setTextViewText(
+                R.id.btn_toggle_auto_reply,
+                if (state.autoReplyEnabled) "Auto-Reply: ON" else "Auto-Reply: OFF"
+            )
+            setTextColor(
+                R.id.btn_toggle_auto_reply,
+                if (state.autoReplyEnabled) Color.parseColor("#38EF7D") else Color.parseColor("#94A3B8")
+            )
+            setOnClickPendingIntent(R.id.btn_toggle_auto_reply, toggleAutoReplyPendingIntent)
+
             if (graceSeconds != null) {
                 setTextViewText(R.id.tv_expanded_status, "EXITING IN ${graceSeconds}s")
                 setTextColor(R.id.tv_expanded_status, Color.parseColor("#FFB300"))
@@ -300,17 +331,19 @@ class ZenShieldForegroundService : Service() {
                 setInt(R.id.tv_expanded_status, "setBackgroundResource", R.drawable.notification_chip_bg)
             }
 
-            setViewVisibility(R.id.chrono_expanded, View.VISIBLE)
-            setViewVisibility(R.id.tv_expanded_duration, View.GONE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                setChronometerCountDown(R.id.chrono_expanded, isTimed)
+            if (isTimed) {
+                // Software-clamped countdown text prevents any negative Chronometer display
+                setViewVisibility(R.id.chrono_expanded, View.GONE)
+                setViewVisibility(R.id.tv_expanded_duration, View.VISIBLE)
+                setTextViewText(R.id.tv_expanded_duration, clampedCountdownText)
+            } else {
+                setViewVisibility(R.id.tv_expanded_duration, View.GONE)
+                setViewVisibility(R.id.chrono_expanded, View.VISIBLE)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    setChronometerCountDown(R.id.chrono_expanded, false)
+                }
+                setChronometer(R.id.chrono_expanded, elapsedChronometerBase, "Elapsed %s", true)
             }
-            setChronometer(
-                R.id.chrono_expanded,
-                chronometerBase,
-                if (isTimed) "%s left" else "Elapsed %s",
-                true
-            )
 
             setProgressBar(R.id.pb_expanded_progress, 100, progressPercent, false)
             setTextViewText(R.id.tv_live_calls_count, liveCallsDeclined.toString())
@@ -339,11 +372,10 @@ class ZenShieldForegroundService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
-        if (isTimed && expiryTime != null) {
-            builder.setWhen(expiryTime)
-            builder.setUsesChronometer(true)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                builder.setChronometerCountDown(true)
+        if (isTimed) {
+            builder.setUsesChronometer(false)
+            if (remainingMs > 0L) {
+                builder.setTimeoutAfter(remainingMs)
             }
         } else {
             builder.setWhen(state.sessionStartTimeMillis ?: now)
@@ -449,6 +481,7 @@ class ZenShieldForegroundService : Service() {
         const val ACTION_ADD_15_MIN = "com.example.zenshield.ACTION_ADD_15_MIN"
         const val ACTION_ADD_30_MIN = "com.example.zenshield.ACTION_ADD_30_MIN"
         const val ACTION_SUBTRACT_15_MIN = "com.example.zenshield.ACTION_SUBTRACT_15_MIN"
+        const val ACTION_TOGGLE_AUTO_REPLY = "com.example.zenshield.ACTION_TOGGLE_AUTO_REPLY"
         const val ACTION_STOP_FOCUS = "com.example.zenshield.ACTION_STOP_FOCUS"
         const val ACTION_UPDATE_NOTIFICATION = "com.example.zenshield.ACTION_UPDATE_NOTIFICATION"
 

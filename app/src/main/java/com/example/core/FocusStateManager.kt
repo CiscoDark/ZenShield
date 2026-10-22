@@ -293,7 +293,25 @@ class FocusStateManager private constructor(context: Context) {
         )
     }
 
-    fun getActiveProfile(): FocusProfile = _state.value.activeProfile
+    fun getActiveProfile(): FocusProfile {
+        checkAndExpireIfNeeded()
+        return _state.value.activeProfile
+    }
+
+    /**
+     * Immediately deactivates Focus Shield if a timed session has reached or passed 00:00,
+     * guaranteeing the timer never counts into negative numbers.
+     */
+    fun checkAndExpireIfNeeded(): Boolean {
+        val current = _state.value
+        val exp = current.expiresAtMillis
+        if (current.activeProfile != FocusProfile.OFF && exp != null && System.currentTimeMillis() >= exp) {
+            Log.i(TAG, "Focus timer reached 00:00. Auto-deactivating Focus Shield immediately.")
+            setProfile(FocusProfile.OFF)
+            return true
+        }
+        return false
+    }
 
     fun isAllowStarredContacts(): Boolean = _state.value.allowStarredContactsOnly
 
@@ -308,6 +326,9 @@ class FocusStateManager private constructor(context: Context) {
         _state.value = updated
         prefs.edit().putBoolean(KEY_DECLINE_ALL_CALLS, enabled).apply()
         Log.d(TAG, "Decline all calls regardless set to: $enabled")
+        if (updated.activeProfile != FocusProfile.OFF) {
+            runCatching { com.example.services.ZenShieldForegroundService.update(appContext) }
+        }
     }
 
     fun setAutoDeclineVoipInGameEnabled(enabled: Boolean) {
@@ -347,6 +368,18 @@ class FocusStateManager private constructor(context: Context) {
         val updated = _state.value.copy(autoReplyEnabled = enabled)
         _state.value = updated
         prefs.edit().putBoolean(KEY_AUTO_REPLY, enabled).commit()
+        if (updated.activeProfile != FocusProfile.OFF) {
+            runCatching {
+                com.example.services.ZenShieldForegroundService.update(appContext)
+            }
+        }
+    }
+
+    fun toggleAutoReply(): Boolean {
+        val next = !_state.value.autoReplyEnabled
+        ExpressiveHaptics.playSpringTap(appContext)
+        setAutoReplyEnabled(next)
+        return next
     }
 
     fun setAutoReplyEnabled(context: Context, enabled: Boolean) {
@@ -667,6 +700,7 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     fun shouldSendAutoReply(senderName: String): Boolean {
+        if (!_state.value.autoReplyEnabled) return false
         if (senderName.isBlank()) return false
         if (isRecentOutgoingCall(senderName)) {
             Log.i(TAG, "Suppressing auto-reply: user initiated outgoing call to '$senderName'")
@@ -676,16 +710,15 @@ class FocusStateManager private constructor(context: Context) {
         val key = "autoreply_cooldown_${senderName.trim().lowercase()}"
         val lastTimestamp = cachePrefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
-        // 15-second cooldown allows rapid back-to-back testing without requiring "Clear Data",
-        // while still preventing rapid spam in active chat bursts.
-        return (now - lastTimestamp) > FIFTEEN_SECONDS_MS
+        // 3-minute (180,000 ms) per-caller auto-reply cooldown for declined calls
+        return lastTimestamp == 0L || (now - lastTimestamp) > AUTO_REPLY_COOLDOWN_MS
     }
 
-    fun recordAutoReplySent(senderName: String) {
+    fun recordAutoReplySent(senderName: String, timestampMillis: Long = System.currentTimeMillis()) {
         if (senderName.isBlank()) return
         val cachePrefs = getVoipCacheSharedPreferences()
         val key = "autoreply_cooldown_${senderName.trim().lowercase()}"
-        cachePrefs.edit().putLong(key, System.currentTimeMillis()).apply()
+        cachePrefs.edit().putLong(key, timestampMillis).apply()
     }
 
     fun resetSessionCaches() {
@@ -787,18 +820,16 @@ class FocusStateManager private constructor(context: Context) {
             if (deltaMinutes > 0) {
                 newExpiry = now + (deltaMinutes * 60_000L)
             } else {
+                // Subtracting time when untimed or already at 00:00 deactivates immediately
+                setProfile(FocusProfile.OFF)
                 return
             }
         } else {
             val adjusted = currentExpiry + (deltaMinutes * 60_000L)
             if (adjusted <= now) {
-                val remainingMs = currentExpiry - now
-                if (remainingMs <= 5 * 60_000L) {
-                    setProfile(FocusProfile.OFF)
-                    return
-                } else {
-                    newExpiry = now + (5 * 60_000L)
-                }
+                // When remaining time reaches or drops below 00:00, immediately deactivate Focus Shield
+                setProfile(FocusProfile.OFF)
+                return
             } else {
                 newExpiry = adjusted
             }
@@ -963,9 +994,9 @@ class FocusStateManager private constructor(context: Context) {
             type = if (isVoip) InterceptType.VOIP_CALL_BOUNCED else InterceptType.CALL_DECLINED,
             sourceLabel = callerLabel,
             detail = if (current.autoReplyEnabled) {
-                "Call declined • Auto-reply dispatched to caller"
+                "Call declined • Auto-reply sent (3m cooldown)"
             } else {
-                "Call declined silently • Zero ring interruption"
+                "Call declined silently • Auto-reply OFF"
             },
             profileName = activeName
         )
@@ -1112,14 +1143,16 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     private fun startExpirationCountdown(targetMillis: Long) {
+        expirationJob?.cancel()
         expirationJob = scope.launch {
             while (isActive) {
                 val remaining = targetMillis - System.currentTimeMillis()
-                if (remaining <= 0) {
+                if (remaining <= 0L) {
+                    Log.i(TAG, "Focus session countdown reached 00:00. Deactivating Focus Shield.")
                     setProfile(FocusProfile.OFF)
                     break
                 }
-                delay(1000L)
+                delay(minOf(250L, remaining.coerceAtLeast(50L)))
             }
         }
     }
@@ -1317,7 +1350,8 @@ class FocusStateManager private constructor(context: Context) {
         const val VOIP_CACHE_PREFS_NAME = "zenshield_voip_cache_prefs"
         const val FIFTEEN_SECONDS_MS = 15_000L
         const val THREE_MINUTES_MS = 180_000L
-        const val THIRTY_MINUTES_MS = 15_000L // 15s cooldown prevents spam while allowing easy testing without Clear Data
+        const val AUTO_REPLY_COOLDOWN_MS = THREE_MINUTES_MS // 3-minute per-caller cooldown for declined call auto-replies
+        const val THIRTY_MINUTES_MS = THREE_MINUTES_MS
         const val GAME_EXIT_DEACTIVATION_DELAY_MS = 30_000L
         const val OUTGOING_CALL_COOLDOWN_MS = 600_000L // 10 minutes
         const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ Sentinal: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."

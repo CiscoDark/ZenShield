@@ -554,6 +554,53 @@ class ExampleRobolectricTest {
         stateManager.clearInterceptHistory()
         assertTrue(stateManager.state.value.recentIntercepts.isEmpty())
     }
+
+    @Test
+    fun `auto reply toggle and 3 minute cooldown work across all surfaces`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.resetSessionCaches()
+        stateManager.setAutoReplyEnabled(true)
+        assertEquals(180_000L, FocusStateManager.AUTO_REPLY_COOLDOWN_MS)
+
+        val caller = "CallerThreeMin"
+        assertTrue("Auto-reply should be allowed initially when enabled", stateManager.shouldSendAutoReply(caller))
+
+        // Toggling auto-reply OFF suppresses auto-reply completely
+        val toggledOff = stateManager.toggleAutoReply()
+        assertFalse(toggledOff)
+        assertFalse("Auto-reply must be suppressed when toggled OFF", stateManager.shouldSendAutoReply(caller))
+
+        // Toggling auto-reply back ON restores auto-reply eligibility
+        val toggledOn = stateManager.toggleAutoReply()
+        assertTrue(toggledOn)
+        assertTrue(stateManager.shouldSendAutoReply(caller))
+
+        // Record auto-reply 2 minutes ago (120,000 ms < 180,000 ms): still within 3-minute cooldown
+        val now = System.currentTimeMillis()
+        stateManager.recordAutoReplySent(caller, now - 120_000L)
+        assertFalse("Should still be in 3-minute cooldown at 2 minutes", stateManager.shouldSendAutoReply(caller))
+
+        // Record auto-reply 3 minutes and 5 seconds ago (185,000 ms > 180,000 ms): cooldown expired
+        stateManager.recordAutoReplySent(caller, now - 185_000L)
+        assertTrue("Should allow auto-reply after 3-minute cooldown expires", stateManager.shouldSendAutoReply(caller))
+    }
+
+    @Test
+    fun `timer reaching zero or subtracting to zero deactivates focus shield without negative count`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+        stateManager.adjustRemainingTime(context, 15)
+        assertEquals(FocusProfile.DO_NOT_DISTURB, stateManager.getActiveProfile())
+
+        // Subtracting 15 minutes brings timer to <= 00:00 and must immediately deactivate Focus Shield
+        stateManager.adjustRemainingTime(context, -15)
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+        assertEquals(null, stateManager.state.value.expiresAtMillis)
+    }
 }
 
 
