@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to restrict automated replies strictly to declined/missed calls, eliminating unwanted automated messages to incoming SMS/chat messages, and ensuring incoming messages are cleanly silenced and dismissed.",
+  "updatedAt":  "2026-10-22T14:59:51.280596009Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

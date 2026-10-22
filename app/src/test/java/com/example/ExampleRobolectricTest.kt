@@ -406,6 +406,49 @@ class ExampleRobolectricTest {
         assertTrue(stateManager.isRecentOutgoingCall("  MOM  "))
         assertFalse(stateManager.shouldSendAutoReply("MOM"))
     }
+
+    @Test
+    fun `auto reply is active for call rejection and auto-reply message formatting works`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        // Ensure auto reply is enabled
+        stateManager.setAutoReplyEnabled(true)
+        assertTrue(stateManager.isAutoReplyEnabled())
+
+        // Active profile message generation works for calls
+        stateManager.setProfile(FocusProfile.GAMING)
+        val gamingMsg = FocusStateManager.getAutoReplyMessage(context)
+        assertTrue(gamingMsg.contains("Gaming"))
+
+        stateManager.setProfile(FocusProfile.WORK)
+        val workMsg = FocusStateManager.getAutoReplyMessage(context)
+        assertTrue(workMsg.contains("Work"))
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `weekly shield stats calculates 7 days and increments telemetry properly`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val initialStats = stateManager.getWeeklyStats()
+        assertEquals(7, initialStats.days.size)
+
+        val todayInitialNotifs = initialStats.days.last().silencedNotifications
+        val todayInitialCalls = initialStats.days.last().declinedCalls
+
+        stateManager.incrementShieldedNotification()
+        stateManager.incrementShieldedCall()
+
+        val updatedStats = stateManager.getWeeklyStats()
+        assertEquals(7, updatedStats.days.size)
+        assertEquals(todayInitialNotifs + 1, updatedStats.days.last().silencedNotifications)
+        assertEquals(todayInitialCalls + 1, updatedStats.days.last().declinedCalls)
+        assertTrue(updatedStats.totalSilencedNotifications > 0)
+        assertTrue(updatedStats.totalDeclinedCalls > 0)
+    }
 }
 
 

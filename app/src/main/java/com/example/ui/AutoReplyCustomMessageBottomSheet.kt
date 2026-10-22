@@ -189,7 +189,7 @@ fun AutoReplyCustomMessageBottomSheet(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "WhatsApp, Telegram & messaging response",
+                            text = "Sent when calls are declined during focus",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

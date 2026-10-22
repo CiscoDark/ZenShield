@@ -319,23 +319,11 @@ class NotificationGuardService : NotificationListenerService() {
             return // Allow visible notification
         }
 
-        // C. Focus Status Auto-Reply via RemoteInput (Zero-Airtime Guardrail: strictly native RemoteInput)
-        if (stateManager.isAutoReplyEnabled() && isMessagingApp(sbn.packageName)) {
-            val senderName = if (title.isNotBlank()) title else sbn.packageName
-            if (!isRecentOutgoingCall(senderName) && !stateManager.isRecentOutgoingCall(senderName) && stateManager.shouldSendAutoReply(senderName)) {
-                val replied = attemptRemoteInputAutoReply(sbn, activeProfile, stateManager)
-                if (replied) {
-                    stateManager.recordAutoReplySent(senderName)
-                    Log.d(TAG, "Sent automatic focus status reply to '$senderName' via RemoteInput")
-                }
-            }
-        }
-
-        // D. Zero-Trace Immediate Dismissal
+        // C. Zero-Trace Immediate Dismissal (Clean silence & dismissal without replying to text messages)
         stateManager.incrementShieldedNotification()
         try {
             cancelNotification(sbn.key)
-            Log.d(TAG, "Zero-trace cleanup: cancelled shielded notification from ${sbn.packageName}")
+            Log.d(TAG, "Zero-trace cleanup: silenced and dismissed shielded notification from ${sbn.packageName}")
         } catch (e: Exception) {
             Log.w(TAG, "Could not cancel notification, falling back to temporary snooze: ${e.message}")
             try {
@@ -820,39 +808,6 @@ class NotificationGuardService : NotificationListenerService() {
         return KNOWN_MESSAGING_PACKAGES.any { pkg.contains(it) }
     }
 
-    private fun attemptRemoteInputAutoReply(
-        sbn: StatusBarNotification,
-        activeProfile: FocusProfile,
-        stateManager: FocusStateManager
-    ): Boolean {
-        val actions = sbn.notification?.actions ?: return false
-
-        for (action in actions) {
-            val remoteInputs = action.remoteInputs ?: continue
-            for (remoteInput in remoteInputs) {
-                if (remoteInput.allowFreeFormInput || remoteInput.resultKey != null) {
-                    val message = FocusStateManager.getAutoReplyMessage(applicationContext)
-
-                    val replyBundle = Bundle().apply {
-                        putCharSequence(remoteInput.resultKey, message)
-                    }
-
-                    val replyIntent = Intent()
-                    RemoteInput.addResultsToIntent(arrayOf(remoteInput), replyIntent, replyBundle)
-
-                    try {
-                        action.actionIntent.send(applicationContext, 0, replyIntent)
-                        return true
-                    } catch (e: PendingIntent.CanceledException) {
-                        Log.w(TAG, "RemoteInput PendingIntent was canceled", e)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error firing RemoteInput auto reply", e)
-                    }
-                }
-            }
-        }
-        return false
-    }
 
     private fun triggerBreakthroughHaptic() {
         try {

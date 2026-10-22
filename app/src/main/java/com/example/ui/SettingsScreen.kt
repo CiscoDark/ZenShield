@@ -225,7 +225,7 @@ fun SettingsScreen(
             }
 
             item {
-                SectionHeader("Focus Status Auto-Reply (RemoteInput)")
+                SectionHeader("Call Rejection Auto-Reply (RemoteInput)")
             }
 
             item {
@@ -242,8 +242,8 @@ fun SettingsScreen(
                     ) {
                         ThemeToggleRow(
                             icon = Icons.Filled.Chat,
-                            title = "Enable Messaging Auto-Reply",
-                            subtitle = "Directly responds on WhatsApp, Telegram, etc. with 30-min per-sender cooldown",
+                            title = "Auto-Reply on Declined Calls",
+                            subtitle = "Notifies callers via in-app message when their call is declined during focus",
                             checked = state.autoReplyEnabled,
                             onCheckedChange = { checked ->
                                 stateManager.setAutoReplyEnabled(checked)

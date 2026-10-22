@@ -300,10 +300,7 @@ fun FocusDashboardScreen(
             }
 
             item {
-                TelemetryOverviewCard(
-                    shieldedCalls = state.totalShieldedCalls,
-                    shieldedNotifications = state.totalShieldedNotifications
-                )
+                WeeklyShieldStatsCard(stateManager = stateManager)
             }
 
             item {
