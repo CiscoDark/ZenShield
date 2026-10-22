@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import com.example.services.GameDetectorService
@@ -128,17 +130,19 @@ fun GameDetectionCard(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        val subtitleText = when {
+                            !state.autoGameDetectionEnabled -> "Auto-activation on launch disabled"
+                            state.gameExitCountdownSeconds != null -> "⏳ Game exited/minimized • Deactivating in ${state.gameExitCountdownSeconds}s"
+                            state.activeProfile == FocusProfile.GAMING -> "🎮 Game active • In Gaming DND lockdown (Auto-exits 30s after leaving game)"
+                            else -> "Auto-activates on launch • Auto-deactivates 30s after exit"
+                        }
                         Text(
-                            text = if (state.autoGameDetectionEnabled) {
-                                if (state.isAutoTriggeredByGame) "🎮 Game active • In Gaming DND lockdown" else "Auto-activates Gaming DND on game launch"
-                            } else {
-                                "Auto-activation on launch disabled"
-                            },
+                            text = subtitleText,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (state.isAutoTriggeredByGame) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                            color = when {
+                                state.gameExitCountdownSeconds != null -> MaterialTheme.colorScheme.error
+                                state.activeProfile == FocusProfile.GAMING -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
                         )
                     }
@@ -155,6 +159,50 @@ fun GameDetectionCard(
 
             AnimatedVisibility(visible = isExpanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    // 30s Exit Countdown Banner if game was minimized/exited
+                    if (state.gameExitCountdownSeconds != null) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth().testTag("game_exit_countdown_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Warning,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "Game exited: deactivating in ${state.gameExitCountdownSeconds}s",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { stateManager.handleGameExited() },
+                                    modifier = Modifier.testTag("deactivate_now_btn")
+                                ) {
+                                    Text(
+                                        text = "Deactivate Now",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Usage Stats Permission Banner if permission missing
                     if (state.autoGameDetectionEnabled && !hasUsageAccess) {
                         UsageAccessAlertBanner(context = context)
@@ -288,18 +336,18 @@ private fun VoipZeroAirtimeSection(
             )
 
             StatusPillTag(
-                label = "In-App Reply",
-                status = "RemoteInput",
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                label = "Auto-Exit",
+                status = "30s Delay",
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 modifier = Modifier.weight(1f)
             )
 
             StatusPillTag(
-                label = "Cellular SMS",
-                status = "Disabled (Free)",
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                label = "In-App Reply",
+                status = "RemoteInput",
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.weight(1f)
             )
         }

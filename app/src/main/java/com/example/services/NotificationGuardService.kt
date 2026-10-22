@@ -75,6 +75,9 @@ class NotificationGuardService : NotificationListenerService() {
     // Trackers for recently declined cellular calls for post-decline missed call suppression (Zero-Trace Cleanup)
     private val recentlyBouncedCellularCalls = ConcurrentHashMap<String, Long>()
 
+    // Trackers for recently placed outgoing calls to completely suppress auto-replies
+    private val recentlyPlacedOutgoingCalls = ConcurrentHashMap<String, Long>()
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         if (sbn == null) return
@@ -101,13 +104,22 @@ class NotificationGuardService : NotificationListenerService() {
         // Cache any valid RemoteInput from messaging or VoIP notifications for Stage 1 pre-warming
         cacheRemoteInputFromNotification(sbn)
 
-        // Evict expired pending replies (> 30 seconds old) and bounced calls (> 20 seconds old)
+        // Evict expired pending replies (> 30 seconds old), bounced calls (> 20 seconds old), and outgoing calls
         evictExpiredPendingReplies()
         evictExpiredBouncedCalls()
+        evictExpiredOutgoingCalls()
 
         // If Focus Shield is OFF, do not intervene
         if (activeProfile == FocusProfile.OFF) {
             return
+        }
+
+        // Check for Outgoing Calls placed by the user (Dialer, WhatsApp, Telegram, etc.)
+        if (isOutgoingCall(sbn)) {
+            val recipient = extractCallerTitle(sbn)
+            recordOutgoingCall(recipient, stateManager)
+            Log.i(TAG, "Outgoing call detected to '$recipient' (${sbn.packageName}). Suppressing auto-replies and allowing call without intervention.")
+            return // Let user's outgoing call proceed completely undisturbed
         }
 
         val isVoipCall = isIncomingVoipCall(sbn)
@@ -310,7 +322,7 @@ class NotificationGuardService : NotificationListenerService() {
         // C. Focus Status Auto-Reply via RemoteInput (Zero-Airtime Guardrail: strictly native RemoteInput)
         if (stateManager.isAutoReplyEnabled() && isMessagingApp(sbn.packageName)) {
             val senderName = if (title.isNotBlank()) title else sbn.packageName
-            if (stateManager.shouldSendAutoReply(senderName)) {
+            if (!isRecentOutgoingCall(senderName) && !stateManager.isRecentOutgoingCall(senderName) && stateManager.shouldSendAutoReply(senderName)) {
                 val replied = attemptRemoteInputAutoReply(sbn, activeProfile, stateManager)
                 if (replied) {
                     stateManager.recordAutoReplySent(senderName)
@@ -346,6 +358,13 @@ class NotificationGuardService : NotificationListenerService() {
 
         val pkg = sbn.packageName
         val title = extractCallerTitle(sbn)
+
+        // If user initiated an outgoing call to this recipient, suppress Stage 2 auto-reply completely
+        if (isRecentOutgoingCall(title) || stateManager.isRecentOutgoingCall(title)) {
+            Log.i(TAG, "Stage 2: Suppressing post-decline reply for '$title' because user initiated an outgoing call to them.")
+            return false
+        }
+
         val normTitle = normalizeTitle(title)
         val sessionKey = buildSessionKey(pkg, title)
 
@@ -528,6 +547,102 @@ class NotificationGuardService : NotificationListenerService() {
         }
     }
 
+    private fun evictExpiredOutgoingCalls() {
+        val now = System.currentTimeMillis()
+        val iterator = recentlyPlacedOutgoingCalls.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now - entry.value > OUTGOING_CALL_COOLDOWN_MS) {
+                iterator.remove()
+            }
+        }
+    }
+
+    private fun recordOutgoingCall(recipient: String, stateManager: FocusStateManager) {
+        if (recipient.isBlank()) return
+        val norm = normalizeTitle(recipient)
+        recentlyPlacedOutgoingCalls[norm] = System.currentTimeMillis()
+        stateManager.recordOutgoingCall(recipient)
+        Log.i(TAG, "Recorded outgoing call to '$recipient' ($norm). Auto-replies suppressed.")
+    }
+
+    private fun isRecentOutgoingCall(recipient: String): Boolean {
+        if (recipient.isBlank()) return false
+        val norm = normalizeTitle(recipient)
+        val now = System.currentTimeMillis()
+        val lastTimestamp = recentlyPlacedOutgoingCalls[norm]
+            ?: recentlyPlacedOutgoingCalls.entries.firstOrNull { (k, _) ->
+                k.contains(norm) || norm.contains(k)
+            }?.value
+
+        if (lastTimestamp != null && (now - lastTimestamp) <= OUTGOING_CALL_COOLDOWN_MS) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Determines if a notification represents an outgoing or active ongoing call placed by the user.
+     * Prevents false-positive incoming call classification and blocks erroneous auto-replies.
+     */
+    private fun isOutgoingCall(sbn: StatusBarNotification): Boolean {
+        val notification = sbn.notification ?: return false
+        val pkg = sbn.packageName.lowercase(Locale.ROOT)
+        val isDialer = KNOWN_DIALER_PACKAGES.any { pkg.contains(it) }
+        val isVoip = isKnownVoipApp(pkg)
+        val isCallCategory = notification.category == Notification.CATEGORY_CALL
+
+        if (!isDialer && !isVoip && !isCallCategory) {
+            return false
+        }
+
+        // 1. If notification has an explicit "Answer" / "Accept" action, it is INCOMING, not outgoing.
+        val hasAnswerAction = notification.actions?.any { action ->
+            val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+            actionTitle.contains("answer") || actionTitle.contains("accept")
+        } == true
+
+        if (hasAnswerAction) {
+            return false
+        }
+
+        // 2. Android 12+ CallStyle check: EXTRA_CALL_TYPE == 2 is CALL_TYPE_ONGOING
+        val callType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            notification.extras.getInt(Notification.EXTRA_CALL_TYPE, -1)
+        } else {
+            notification.extras.getInt("android.callType", -1)
+        }
+        if (callType == 2) { // 2 = Notification.CallStyle.CALL_TYPE_ONGOING
+            return true
+        }
+
+        // 3. Inspect notification text, subtext, and big text for outgoing/ongoing keywords
+        val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+        val subText = notification.extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString() ?: ""
+        val bigText = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+        val combinedContent = "$title $text $subText $bigText".lowercase(Locale.ROOT)
+
+        val hasOutgoingKeywords = OUTGOING_CALL_KEYWORDS.any { combinedContent.contains(it) }
+        if (hasOutgoingKeywords) {
+            return true
+        }
+
+        // 4. If it's a dialer or VoIP call notification without an Answer action, and has Hang Up / End Call / Mute / Speaker action
+        val hasEndOrMuteAction = notification.actions?.any { action ->
+            val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+            actionTitle.contains("end") || actionTitle.contains("hang up") ||
+                    actionTitle.contains("mute") || actionTitle.contains("speaker") ||
+                    actionTitle.contains("hold") || actionTitle.contains("return")
+        } == true
+
+        if ((isDialer || isVoip || isCallCategory) && hasEndOrMuteAction && !hasAnswerAction) {
+            return true
+        }
+
+        return false
+    }
+
     private fun buildSessionKey(packageName: String, title: String): String {
         return "${packageName.lowercase(Locale.ROOT)}|${normalizeTitle(title)}"
     }
@@ -550,25 +665,35 @@ class NotificationGuardService : NotificationListenerService() {
             return false
         }
 
+        // Explicit outgoing call bypass
+        if (isOutgoingCall(sbn)) {
+            return false
+        }
+
         val isDialerPkg = KNOWN_DIALER_PACKAGES.any { pkg.contains(it) }
         val isCallCategory = notification.category == Notification.CATEGORY_CALL
 
         if (isDialerPkg || isCallCategory) {
-            // Check for call action buttons (Decline / Reject / Answer / Dismiss) or fullScreenIntent
-            val hasCallActions = notification.actions?.any { action ->
+            val hasAnswerAction = notification.actions?.any { action ->
                 val title = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
-                title.contains("decline") || title.contains("reject") || title.contains("answer") || title.contains("dismiss")
+                title.contains("answer") || title.contains("accept")
             } == true
 
-            if (notification.fullScreenIntent != null || hasCallActions) {
+            val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+            val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+            val content = "$title $text".lowercase(Locale.ROOT)
+            val hasIncomingKeywords = INCOMING_CALL_KEYWORDS.any { content.contains(it) }
+
+            if (hasAnswerAction || hasIncomingKeywords) {
                 return true
             }
 
-            if (isCallCategory) {
-                val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
-                val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
-                val content = "$title $text".lowercase(Locale.ROOT)
-                if (CALL_KEYWORDS.any { content.contains(it) }) {
+            if (notification.fullScreenIntent != null && !hasAnswerAction) {
+                val hasDeclineAction = notification.actions?.any { action ->
+                    val aTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+                    aTitle.contains("decline") || aTitle.contains("reject")
+                } == true
+                if (hasDeclineAction) {
                     return true
                 }
             }
@@ -599,27 +724,45 @@ class NotificationGuardService : NotificationListenerService() {
             return false
         }
 
-        // Category check
-        if (notification.category == Notification.CATEGORY_CALL) {
-            return true
+        // Explicit outgoing call bypass
+        if (isOutgoingCall(sbn)) {
+            return false
         }
 
-        // Full screen intent check (standard pattern for incoming VoIP calls)
-        if (notification.fullScreenIntent != null) {
-            return true
-        }
+        val hasAnswerAction = notification.actions?.any { action ->
+            val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+            actionTitle.contains("answer") || actionTitle.contains("accept")
+        } == true
 
         val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
         val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
         val content = "$title $text".lowercase(Locale.ROOT)
+        val hasIncomingCallText = INCOMING_CALL_KEYWORDS.any { content.contains(it) }
 
-        val hasCallText = CALL_KEYWORDS.any { content.contains(it) }
-        val hasCallActions = notification.actions?.any { action ->
-            val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
-            actionTitle.contains("decline") || actionTitle.contains("reject") || actionTitle.contains("answer")
-        } == true
+        if (notification.fullScreenIntent != null && (hasAnswerAction || hasIncomingCallText)) {
+            return true
+        }
 
-        return hasCallText || hasCallActions
+        if (hasAnswerAction) {
+            return true
+        }
+
+        if (hasIncomingCallText) {
+            return true
+        }
+
+        // Category check: only classify as incoming if fullScreenIntent is present and has decline action
+        if (notification.category == Notification.CATEGORY_CALL && notification.fullScreenIntent != null) {
+            val hasDeclineAction = notification.actions?.any { action ->
+                val actionTitle = action.title?.toString()?.lowercase(Locale.ROOT) ?: ""
+                actionTitle.contains("decline") || actionTitle.contains("reject")
+            } == true
+            if (hasDeclineAction) {
+                return true
+            }
+        }
+
+        return false
     }
 
     private fun extractCallerTitle(sbn: StatusBarNotification): String {
@@ -771,6 +914,7 @@ class NotificationGuardService : NotificationListenerService() {
         private const val PENDING_VOIP_TIMEOUT_MS = 30_000L
         private const val RECENT_BOUNCE_WINDOW_MS = 20_000L
         private const val CACHE_MAX_AGE_MS = 3_600_000L
+        private const val OUTGOING_CALL_COOLDOWN_MS = 600_000L
 
         private val KNOWN_VOIP_PACKAGES = setOf(
             "com.whatsapp",
@@ -808,12 +952,28 @@ class NotificationGuardService : NotificationListenerService() {
             "com.discord"
         )
 
-        private val CALL_KEYWORDS = setOf(
+        private val INCOMING_CALL_KEYWORDS = setOf(
             "incoming voice call",
             "incoming video call",
+            "incoming audio call",
             "incoming call",
             "is calling",
-            "call in progress"
+            "wants you to join",
+            "call from"
+        )
+
+        private val OUTGOING_CALL_KEYWORDS = setOf(
+            "outgoing call",
+            "outgoing voice call",
+            "outgoing video call",
+            "calling",
+            "dialing",
+            "ringing",
+            "ongoing call",
+            "call in progress",
+            "in call",
+            "tap to return to call",
+            "return to call"
         )
 
         private val DECLINE_KEYWORDS = setOf(

@@ -10,6 +10,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.Process
 import android.util.Log
 import com.example.core.FocusProfile
@@ -37,7 +38,7 @@ class GameDetectorService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var detectionJob: Job? = null
     private val gameClassificationCache = ConcurrentHashMap<String, Boolean>()
-    private var nonGameDebounceCounter = 0
+    private var lastKnownForegroundPackage: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -77,32 +78,36 @@ class GameDetectorService : Service() {
                 }
 
                 try {
-                    val foregroundPackage = getForegroundPackage(applicationContext)
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                    val isScreenInteractive = powerManager?.isInteractive ?: true
 
-                    if (!foregroundPackage.isNullOrBlank() && !isIgnoredPackage(foregroundPackage)) {
-                        val isCurrentGame = isGamePackage(foregroundPackage, stateManager)
+                    val detectedPackage = getForegroundPackage(applicationContext)
+                    if (!detectedPackage.isNullOrBlank()) {
+                        lastKnownForegroundPackage = detectedPackage
+                    }
 
-                        if (isCurrentGame) {
-                            nonGameDebounceCounter = 0
-                            if (stateManager.state.value.activeProfile != FocusProfile.GAMING) {
-                                Log.i(TAG, "Game detected in foreground: $foregroundPackage. Triggering Gaming Profile.")
-                                stateManager.handleGameLaunched(foregroundPackage)
+                    // A game is actively in foreground if screen is interactive AND top package is classified as game
+                    val isGameInForeground = isScreenInteractive &&
+                            lastKnownForegroundPackage != null &&
+                            isGamePackage(lastKnownForegroundPackage!!, stateManager)
+
+                    if (isGameInForeground) {
+                        // Game is actively running in foreground: cancel any pending deactivation countdown
+                        stateManager.cancelGameExitedDeactivation()
+
+                        if (stateManager.state.value.activeProfile != FocusProfile.GAMING) {
+                            Log.i(TAG, "Game detected in foreground: $lastKnownForegroundPackage. Triggering Gaming Profile.")
+                            stateManager.handleGameLaunched(lastKnownForegroundPackage!!)
+                        }
+                    } else {
+                        // Game is NOT in foreground (exited, minimized to launcher, switched apps, or screen off)
+                        if (stateManager.state.value.activeProfile == FocusProfile.GAMING) {
+                            if (!stateManager.isGameExitedDeactivationScheduled()) {
+                                Log.i(TAG, "Game exited or minimized (current: $lastKnownForegroundPackage, screenInteractive: $isScreenInteractive). Scheduling 30s auto-deactivation.")
+                                stateManager.scheduleGameExitedDeactivation(FocusStateManager.GAME_EXIT_DEACTIVATION_DELAY_MS)
                             }
                         } else {
-                            // Non-game app in foreground
-                            if (stateManager.state.value.isAutoTriggeredByGame &&
-                                stateManager.state.value.activeProfile == FocusProfile.GAMING
-                            ) {
-                                nonGameDebounceCounter++
-                                // 2 consecutive intervals (~3.5 seconds) outside game before reverting
-                                if (nonGameDebounceCounter >= DEBOUNCE_THRESHOLD) {
-                                    Log.i(TAG, "Non-game detected for $nonGameDebounceCounter ticks ($foregroundPackage). Reverting profile.")
-                                    stateManager.handleGameExited()
-                                    nonGameDebounceCounter = 0
-                                }
-                            } else {
-                                nonGameDebounceCounter = 0
-                            }
+                            stateManager.cancelGameExitedDeactivation()
                         }
                     }
                 } catch (e: Exception) {
@@ -112,15 +117,6 @@ class GameDetectorService : Service() {
                 delay(POLL_INTERVAL_MS)
             }
         }
-    }
-
-    private fun isIgnoredPackage(pkg: String): Boolean {
-        return pkg == packageName ||
-                pkg == "android" ||
-                pkg == "com.android.systemui" ||
-                pkg.contains("launcher") ||
-                pkg.contains("inputmethod") ||
-                pkg.contains("keyboard")
     }
 
     private fun isGamePackage(pkg: String, stateManager: FocusStateManager): Boolean {
@@ -189,9 +185,8 @@ class GameDetectorService : Service() {
 
     companion object {
         private const val TAG = "GameDetectorService"
-        private const val POLL_INTERVAL_MS = 1800L
-        private const val LOOKBACK_WINDOW_MS = 10_000L
-        private const val DEBOUNCE_THRESHOLD = 2
+        private const val POLL_INTERVAL_MS = 1000L
+        private const val LOOKBACK_WINDOW_MS = 30_000L
         const val ACTION_STOP_DETECTION = "com.example.zenshield.ACTION_STOP_GAME_DETECTION"
 
         fun hasUsageStatsPermission(context: Context): Boolean {

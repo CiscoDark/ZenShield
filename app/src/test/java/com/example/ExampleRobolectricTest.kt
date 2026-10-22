@@ -340,5 +340,72 @@ class ExampleRobolectricTest {
         assertFalse("declineAllCallsRegardless must be false", stateManager.isDeclineAllCallsRegardless())
         assertFalse("state property must be false", stateManager.state.value.declineAllCallsRegardless)
     }
+
+    @Test
+    fun `game exit deactivation scheduling and cancellation behaves correctly`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        stateManager.setAutoGameDetectionEnabled(true)
+
+        // Launch game
+        stateManager.handleGameLaunched("com.example.game")
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+        assertFalse(stateManager.isGameExitedDeactivationScheduled())
+
+        // Schedule deactivation
+        stateManager.scheduleGameExitedDeactivation(30_000L)
+        assertTrue(stateManager.isGameExitedDeactivationScheduled())
+
+        // Cancel deactivation (e.g. user resumes game)
+        stateManager.cancelGameExitedDeactivation()
+        assertFalse(stateManager.isGameExitedDeactivationScheduled())
+        assertEquals(null, stateManager.state.value.gameExitCountdownSeconds)
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+
+        // Direct exit deactivation reverts profile
+        stateManager.handleGameExited()
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+    }
+
+    @Test
+    fun `outgoing call records timestamp and suppresses auto-reply for recipient`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val recipient = "Charlie Brown"
+
+        // Initially without outgoing call, shouldSendAutoReply is true
+        assertTrue("Auto reply should initially be allowed", stateManager.shouldSendAutoReply(recipient))
+
+        // Record outgoing call placed by user
+        stateManager.recordOutgoingCall(recipient)
+
+        // isRecentOutgoingCall must return true
+        assertTrue("isRecentOutgoingCall must be true for dialed recipient", stateManager.isRecentOutgoingCall(recipient))
+
+        // shouldSendAutoReply must now return false (suppressed!)
+        assertFalse("shouldSendAutoReply must be false for dialed recipient to prevent bug", stateManager.shouldSendAutoReply(recipient))
+
+        // Other contacts should not be affected
+        val otherContact = "David Miller"
+        assertFalse("Other contact must not be marked as recent outgoing call", stateManager.isRecentOutgoingCall(otherContact))
+        assertTrue("Other contact should still receive auto reply if sent to them", stateManager.shouldSendAutoReply(otherContact))
+    }
+
+    @Test
+    fun `outgoing call case-insensitive and whitespace-tolerant matching`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        val contactName = "Mom"
+        stateManager.recordOutgoingCall(contactName)
+
+        assertTrue(stateManager.isRecentOutgoingCall("mom"))
+        assertTrue(stateManager.isRecentOutgoingCall("  MOM  "))
+        assertFalse(stateManager.shouldSendAutoReply("MOM"))
+    }
 }
+
 

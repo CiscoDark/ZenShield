@@ -56,7 +56,8 @@ data class FocusSessionState(
     val totalShieldedCalls: Int = 0,
     val totalShieldedNotifications: Int = 0,
     val sessionStartTimeMillis: Long? = null,
-    val declineAllCallsRegardless: Boolean = false
+    val declineAllCallsRegardless: Boolean = false,
+    val gameExitCountdownSeconds: Int? = null
 )
 
 class FocusStateManager private constructor(context: Context) {
@@ -66,6 +67,7 @@ class FocusStateManager private constructor(context: Context) {
     private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var expirationJob: Job? = null
+    private var gameExitDeactivationJob: Job? = null
 
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<FocusSessionState> = _state.asStateFlow()
@@ -416,7 +418,38 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putStringSet(KEY_CUSTOM_GAME_PACKAGES, updatedSet).apply()
     }
 
+    fun scheduleGameExitedDeactivation(delayMillis: Long = GAME_EXIT_DEACTIVATION_DELAY_MS) {
+        if (_state.value.activeProfile != FocusProfile.GAMING) return
+        if (gameExitDeactivationJob?.isActive == true) return
+
+        Log.i(TAG, "Game exited or minimized. Scheduling auto-deactivation in ${delayMillis / 1000}s.")
+        gameExitDeactivationJob = scope.launch {
+            val totalSeconds = (delayMillis / 1000).toInt()
+            for (sec in totalSeconds downTo 1) {
+                _state.value = _state.value.copy(gameExitCountdownSeconds = sec)
+                delay(1000L)
+            }
+            _state.value = _state.value.copy(gameExitCountdownSeconds = null)
+            Log.i(TAG, "30-second game exit grace period expired. Auto-deactivating Gaming mode.")
+            handleGameExited()
+        }
+    }
+
+    fun cancelGameExitedDeactivation() {
+        if (gameExitDeactivationJob?.isActive == true || _state.value.gameExitCountdownSeconds != null) {
+            Log.i(TAG, "Game resumed or focus changed. Cancelling pending auto-deactivation countdown.")
+            gameExitDeactivationJob?.cancel()
+            gameExitDeactivationJob = null
+            _state.value = _state.value.copy(gameExitCountdownSeconds = null)
+        }
+    }
+
+    fun isGameExitedDeactivationScheduled(): Boolean {
+        return gameExitDeactivationJob?.isActive == true
+    }
+
     fun handleGameLaunched(packageName: String) {
+        cancelGameExitedDeactivation()
         val current = _state.value
         if (!current.autoGameDetectionEnabled) return
         if (current.activeProfile == FocusProfile.GAMING) return
@@ -428,7 +461,8 @@ class FocusStateManager private constructor(context: Context) {
             previousProfileBeforeGame = prev,
             isAutoTriggeredByGame = true,
             durationOption = DurationOption.UNTIL_TURNED_OFF,
-            expiresAtMillis = null
+            expiresAtMillis = null,
+            gameExitCountdownSeconds = null
         )
         _state.value = updated
         _activeProfileFlow.value = FocusProfile.GAMING
@@ -444,8 +478,9 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     fun handleGameExited() {
+        cancelGameExitedDeactivation()
         val current = _state.value
-        if (!current.isAutoTriggeredByGame || current.activeProfile != FocusProfile.GAMING) return
+        if (current.activeProfile != FocusProfile.GAMING) return
 
         val targetProfile = current.previousProfileBeforeGame
         Log.i(TAG, "Game exited. Reverting focus profile from GAMING to ${targetProfile.displayName}")
@@ -453,7 +488,8 @@ class FocusStateManager private constructor(context: Context) {
             activeProfile = targetProfile,
             isAutoTriggeredByGame = false,
             durationOption = DurationOption.UNTIL_TURNED_OFF,
-            expiresAtMillis = null
+            expiresAtMillis = null,
+            gameExitCountdownSeconds = null
         )
         _state.value = updated
         _activeProfileFlow.value = targetProfile
@@ -524,8 +560,31 @@ class FocusStateManager private constructor(context: Context) {
         return false
     }
 
+    fun recordOutgoingCall(recipient: String) {
+        if (recipient.isBlank()) return
+        val cachePrefs = getVoipCacheSharedPreferences()
+        val normalized = recipient.trim().lowercase()
+        cachePrefs.edit().putLong("outgoing_call_timestamp_$normalized", System.currentTimeMillis()).apply()
+        Log.i(TAG, "Recorded outgoing call to '$recipient' ($normalized). Auto-replies suppressed.")
+    }
+
+    fun isRecentOutgoingCall(recipient: String, cooldownMs: Long = OUTGOING_CALL_COOLDOWN_MS): Boolean {
+        if (recipient.isBlank()) return false
+        val cachePrefs = getVoipCacheSharedPreferences()
+        val normalized = recipient.trim().lowercase()
+        val lastTimestamp = cachePrefs.getLong("outgoing_call_timestamp_$normalized", 0L)
+        if (lastTimestamp > 0L && (System.currentTimeMillis() - lastTimestamp) <= cooldownMs) {
+            return true
+        }
+        return false
+    }
+
     fun shouldSendAutoReply(senderName: String): Boolean {
         if (senderName.isBlank()) return false
+        if (isRecentOutgoingCall(senderName)) {
+            Log.i(TAG, "Suppressing auto-reply: user initiated outgoing call to '$senderName'")
+            return false
+        }
         val cachePrefs = getVoipCacheSharedPreferences()
         val key = "autoreply_cooldown_${senderName.trim().lowercase()}"
         val lastTimestamp = cachePrefs.getLong(key, 0L)
@@ -572,6 +631,7 @@ class FocusStateManager private constructor(context: Context) {
 
         expirationJob?.cancel()
         expirationJob = null
+        cancelGameExitedDeactivation()
 
         if (profile != FocusProfile.OFF && expiresAt != null) {
             startExpirationCountdown(expiresAt)
@@ -953,6 +1013,8 @@ class FocusStateManager private constructor(context: Context) {
         const val FIFTEEN_SECONDS_MS = 15_000L
         const val THREE_MINUTES_MS = 180_000L
         const val THIRTY_MINUTES_MS = 15_000L // 15s cooldown prevents spam while allowing easy testing without Clear Data
+        const val GAME_EXIT_DEACTIVATION_DELAY_MS = 30_000L
+        const val OUTGOING_CALL_COOLDOWN_MS = 600_000L // 10 minutes
         const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ Sentinal: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
 
         private const val KEY_ACTIVE_PROFILE = "key_active_profile"
