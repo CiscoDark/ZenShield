@@ -443,13 +443,17 @@ class FocusStateManager private constructor(context: Context) {
         if (_state.value.activeProfile != FocusProfile.GAMING) return
         if (gameExitDeactivationJob?.isActive == true) return
 
-        Log.i(TAG, "Game exited or minimized. Scheduling auto-deactivation in ${delayMillis / 1000}s.")
+        val totalSeconds = maxOf(1, (delayMillis / 1000).toInt())
+        _state.value = _state.value.copy(gameExitCountdownSeconds = totalSeconds)
+        Log.i(TAG, "Game exited or minimized. Scheduling auto-deactivation in ${totalSeconds}s.")
         gameExitDeactivationJob = scope.launch {
-            val totalSeconds = (delayMillis / 1000).toInt()
-            for (sec in totalSeconds downTo 1) {
-                _state.value = _state.value.copy(gameExitCountdownSeconds = sec)
+            for (sec in (totalSeconds - 1) downTo 1) {
                 delay(1000L)
+                if (!isActive || _state.value.activeProfile != FocusProfile.GAMING) return@launch
+                _state.value = _state.value.copy(gameExitCountdownSeconds = sec)
             }
+            delay(1000L)
+            if (!isActive || _state.value.activeProfile != FocusProfile.GAMING) return@launch
             _state.value = _state.value.copy(gameExitCountdownSeconds = null)
             Log.i(TAG, "30-second game exit grace period expired. Auto-deactivating Gaming mode.")
             handleGameExited()

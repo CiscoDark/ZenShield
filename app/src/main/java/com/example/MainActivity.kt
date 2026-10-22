@@ -1,7 +1,6 @@
 package com.example
 
 import android.Manifest
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,13 +10,12 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -25,77 +23,97 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.PhoneCallback
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SportsEsports
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -108,22 +126,33 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.core.DurationOption
 import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import com.example.ui.AutoReplyCustomMessageBottomSheet
 import com.example.ui.GameDetectionCard
+import com.example.ui.WeeklyShieldStatsCard
 import com.example.ui.theme.FocusThemePreferences
+import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.Typography
-import com.example.ui.theme.ZenShieldTheme
 import kotlinx.coroutines.delay
+
+enum class SentinalWorkspaceTab(
+    val label: String,
+    val icon: ImageVector,
+    val tag: String
+) {
+    SHIELD("Shield", Icons.Rounded.Shield, "nav_tab_shield"),
+    ANALYTICS("Analytics", Icons.Rounded.BarChart, "nav_tab_analytics"),
+    RULES("Rules", Icons.Rounded.Tune, "nav_tab_rules"),
+    SYSTEM("System", Icons.Rounded.Palette, "nav_tab_system")
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -139,7 +168,6 @@ class MainActivity : ComponentActivity() {
 
         val stateManager = FocusStateManager.getInstance(applicationContext)
 
-        // Automatic Permission Audit on Launch (Android 13+ POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -165,11 +193,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    override fun onResume() {
-        super.onResume()
-        // Re-sync on resume
-    }
 }
 
 /**
@@ -186,7 +209,6 @@ fun DynamicTheme(
 ) {
     val context = LocalContext.current
 
-    // Material You dynamic system color scheme resolution (Android 12+ / API 31+)
     val dynamicColorScheme: ColorScheme? = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (!preferences.profileTintedAccent || activeProfile == FocusProfile.OFF)) {
         if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     } else null
@@ -231,10 +253,20 @@ fun ZenShieldDashboardScreen(
 ) {
     val state by stateManager.state.collectAsState()
     val activeProfile by stateManager.activeProfileFlow.collectAsState()
+    val weeklySummary by stateManager.weeklyStatsFlow.collectAsState()
     val context = LocalContext.current
+
+    var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val selectedTab = SentinalWorkspaceTab.entries[selectedTabIndex]
+
     var showWhitelistSheet by remember { mutableStateOf(false) }
     var showGamePickerSheet by remember { mutableStateOf(false) }
     var showAutoReplySheet by remember { mutableStateOf(false) }
+
+    // Return to Shield Command Center when pressing Back from secondary tabs
+    BackHandler(enabled = selectedTabIndex != 0) {
+        selectedTabIndex = 0
+    }
 
     // System Permissions & Access Trackers
     var hasNotificationListener by remember { mutableStateOf(checkNotificationListenerAccess(context)) }
@@ -243,9 +275,8 @@ fun ZenShieldDashboardScreen(
     var hasBatteryExemption by remember { mutableStateOf(checkBatteryOptimizationExemption(context)) }
     var hasUsageStatsAccess by remember { mutableStateOf(GameDetectorService.hasUsageStatsPermission(context)) }
 
-    // Re-check permissions and roles on lifecycle resume
     val lifecycleOwner = LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasNotificationListener = checkNotificationListenerAccess(context)
@@ -267,10 +298,17 @@ fun ZenShieldDashboardScreen(
         hasRuntimePermissions = checkRuntimePermissions(context)
     }
 
-    // Dynamic Header Background animated color
+    val grantedPermissionsCount = listOf(
+        hasNotificationListener,
+        hasDndAccess,
+        hasRuntimePermissions,
+        hasBatteryExemption,
+        hasUsageStatsAccess
+    ).count { it }
+
     val animatedHeaderColor by animateColorAsState(
         targetValue = when (activeProfile) {
-            FocusProfile.OFF -> MaterialTheme.colorScheme.surfaceContainer
+            FocusProfile.OFF -> MaterialTheme.colorScheme.surfaceContainerHigh
             FocusProfile.DO_NOT_DISTURB -> MaterialTheme.colorScheme.primaryContainer
             FocusProfile.GAMING -> MaterialTheme.colorScheme.secondaryContainer
             FocusProfile.WORK -> MaterialTheme.colorScheme.tertiaryContainer
@@ -283,331 +321,170 @@ fun ZenShieldDashboardScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = {
-                    Column {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(34.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Shield,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(28.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Column {
                             Text(
                                 text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.headlineLarge,
-                                fontWeight = FontWeight.Bold
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = when (selectedTab) {
+                                    SentinalWorkspaceTab.SHIELD -> "Command Center & Focus Profiles"
+                                    SentinalWorkspaceTab.ANALYTICS -> "7-Day Call & Alert Telemetry"
+                                    SentinalWorkspaceTab.RULES -> "Call Bouncer & Auto-Reply Engine"
+                                    SentinalWorkspaceTab.SYSTEM -> "Material You Studio & Permissions"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Text(
-                            text = "Intelligent Material You Focus Guardian",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 },
                 actions = {
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                         modifier = Modifier
-                            .padding(end = 16.dp)
+                            .padding(end = 12.dp)
                             .clickable { showWhitelistSheet = true }
                             .testTag("app_whitelist_quick_action")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Apps,
-                                contentDescription = null,
+                                contentDescription = "Open App Whitelist",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Text(
                                 text = "Whitelist",
                                 style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
                 },
-                colors = TopAppBarDefaults.largeTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
+        },
+        bottomBar = {
+            NavigationBar(
+                windowInsets = WindowInsets.navigationBars,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 3.dp
+            ) {
+                SentinalWorkspaceTab.entries.forEachIndexed { index, tab ->
+                    val isSelected = selectedTabIndex == index
+                    NavigationBarItem(
+                        selected = isSelected,
+                        onClick = { selectedTabIndex = index },
+                        icon = {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = tab.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        modifier = Modifier.testTag(tab.tag)
+                    )
+                }
+            }
         }
     ) { innerPadding ->
-        LazyColumn(
+        AnimatedContent(
+            targetState = selectedTab,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+            },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // 1. Hero Status Header Card
-            item {
-                Spacer(modifier = Modifier.height(4.dp))
-                HeroStatusHeaderCard(
-                    state = state,
-                    activeProfile = activeProfile,
-                    headerBgColor = animatedHeaderColor,
-                    onDurationSelected = { duration ->
-                        stateManager.setDuration(duration)
-                    },
-                    onToggleFocus = {
-                        stateManager.resetSessionCaches()
-                        if (activeProfile == FocusProfile.OFF) {
-                            stateManager.setProfile(FocusProfile.DO_NOT_DISTURB, state.durationOption)
-                        } else {
-                            stateManager.setProfile(FocusProfile.OFF)
-                        }
-                    }
-                )
-            }
-
-            // 2. Horizontal Profile Carousel
-            item {
-                Text(
-                    text = "Focus Profile Selector",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalProfileCarousel(
-                    activeProfile = activeProfile,
-                    onProfileSelected = { profile ->
-                        stateManager.resetSessionCaches()
-                        stateManager.setProfile(profile, state.durationOption)
-                    }
-                )
-            }
-
-            // 3. Tabbed / Expandable Configuration Cards
-            item {
-                Text(
-                    text = "Shield Engine Rules & Settings",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            // Card 1: Gaming Mode Lockdown
-            item {
-                ExpandableConfigCard(
-                    title = "Gaming Mode Lockdown",
-                    subtitle = "Zero latency, zero popups, uninterrupted gaming",
-                    icon = Icons.Rounded.SportsEsports,
-                    initiallyExpanded = state.activeProfile == FocusProfile.GAMING
-                ) {
-                    ConfigSwitchRow(
-                        title = "Auto-Activate Game Mode DND on Game Launch",
-                        subtitle = "Automatically transitions to Gaming DND whenever any game launches, and restores previous profile on exit",
-                        checked = state.autoGameDetectionEnabled,
-                        onCheckedChange = { stateManager.setAutoGameDetectionEnabled(it) },
-                        testTag = "switch_auto_activate_game_dnd"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Auto-Decline WhatsApp & VoIP Calls in Game",
-                        subtitle = "Immediately drops VoIP calls in background during gaming",
-                        checked = state.autoDeclineVoipInGame,
-                        onCheckedChange = { stateManager.setAutoDeclineVoipInGameEnabled(it) },
-                        testTag = "switch_gaming_voip"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Block Cellular Calls (Including Starred)",
-                        subtitle = "Overrides priority contacts so you are never kicked out of match",
-                        checked = state.strictGamingLockdownEnabled,
-                        onCheckedChange = { stateManager.setStrictGamingLockdownEnabled(it) },
-                        testTag = "switch_gaming_lockdown"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Suppress All Heads-Up Banners",
-                        subtitle = "Blocks intrusive overlay banners while gaming",
-                        checked = state.suppressHeadsUpBanners,
-                        onCheckedChange = { stateManager.setSuppressHeadsUpBannersEnabled(it) },
-                        testTag = "switch_gaming_heads_up"
+                .padding(innerPadding),
+            label = "workspace_tab_transition"
+        ) { currentTab ->
+            when (currentTab) {
+                SentinalWorkspaceTab.SHIELD -> {
+                    ShieldCommandCenterTab(
+                        state = state,
+                        activeProfile = activeProfile,
+                        headerBgColor = animatedHeaderColor,
+                        weeklySilencedTotal = weeklySummary.totalSilencedNotifications,
+                        weeklyCallsTotal = weeklySummary.totalDeclinedCalls,
+                        grantedPermissionsCount = grantedPermissionsCount,
+                        stateManager = stateManager,
+                        onOpenAnalyticsTab = { selectedTabIndex = SentinalWorkspaceTab.ANALYTICS.ordinal },
+                        onOpenRulesTab = { selectedTabIndex = SentinalWorkspaceTab.RULES.ordinal },
+                        onOpenSystemTab = { selectedTabIndex = SentinalWorkspaceTab.SYSTEM.ordinal }
                     )
                 }
-            }
 
-            // Real-Time Game Launch Detector & Zero-Airtime VoIP Reply
-            item {
-                GameDetectionCard(
-                    state = state,
-                    stateManager = stateManager,
-                    onOpenAppPicker = { showGamePickerSheet = true }
-                )
-            }
-
-            // Card 2: Active Call & VoIP Bouncer
-            item {
-                ExpandableConfigCard(
-                    title = "Active Call & VoIP Bouncer",
-                    subtitle = "Network-level rejection & 3-minute repeat breakthrough",
-                    icon = Icons.Rounded.Phone,
-                    initiallyExpanded = true
-                ) {
-                    ConfigSwitchRow(
-                        title = "Decline All Calls Regardless of Condition",
-                        subtitle = "Zero-tolerance lockdown: automatically drops all incoming cellular and VoIP calls, ignoring starred contacts and repeat callers",
-                        checked = state.declineAllCallsRegardless,
-                        onCheckedChange = { stateManager.setDeclineAllCallsRegardless(it) },
-                        testTag = "switch_decline_all_calls_regardless"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Network-Level Call Rejection (Instant User Busy)",
-                        subtitle = "Sends immediate busy signal to tower without ringing",
-                        checked = state.networkLevelCallRejection,
-                        onCheckedChange = { stateManager.setNetworkLevelCallRejectionEnabled(it) },
-                        testTag = "switch_network_rejection"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Auto-Decline WhatsApp/Telegram Calls",
-                        subtitle = "Hangs up third-party VoIP calls via programmatic action intent",
-                        checked = state.autoDeclineVoipCalls,
-                        onCheckedChange = { stateManager.setAutoDeclineVoipCallsEnabled(it) },
-                        testTag = "switch_voip_bouncer"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "3-Minute Repeat Caller Breakthrough",
-                        subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Second call within 180s rings out loud for real emergencies",
-                        checked = state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
-                        onCheckedChange = { stateManager.setAllowRepeatCallersEnabled(it) },
-                        testTag = "switch_repeat_breakthrough"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Allow Starred Contacts",
-                        subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Passes priority contacts through cellular & VoIP filters",
-                        checked = state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
-                        onCheckedChange = { checked ->
-                            stateManager.updateProfileSettings(checked, state.blockRepeatedCallers, state.silenceNotifications)
-                        },
-                        testTag = "switch_allow_starred"
+                SentinalWorkspaceTab.ANALYTICS -> {
+                    AnalyticsTelemetryTab(
+                        state = state,
+                        stateManager = stateManager
                     )
                 }
-            }
 
-            // 3. VoIP Auto-Reply Customization Card (ElevatedCard)
-            item {
-                VoipAutoReplyCustomizationCard(
-                    state = state,
-                    stateManager = stateManager,
-                    onOpenCustomizeSheet = { showAutoReplySheet = true }
-                )
-            }
-
-            // Card 3: Smart Breakthrough & Emergency Scanner
-            item {
-                ExpandableConfigCard(
-                    title = "Smart Breakthrough & Emergency Scanner",
-                    subtitle = "Scans critical OTPs, ride drivers, and emergency text alerts",
-                    icon = Icons.Rounded.Notifications,
-                    initiallyExpanded = false
-                ) {
-                    ConfigSwitchRow(
-                        title = "OTP, Ride & 'URGENT' Keyword Breakthrough",
-                        subtitle = "Allows 2FA codes, delivery drivers, and emergency text alerts",
-                        checked = state.smartUrgentBreakthroughEnabled,
-                        onCheckedChange = { stateManager.setSmartUrgentBreakthroughEnabled(it) },
-                        testTag = "switch_smart_urgent"
+                SentinalWorkspaceTab.RULES -> {
+                    RulesAndBouncerTab(
+                        state = state,
+                        stateManager = stateManager,
+                        onOpenAutoReplySheet = { showAutoReplySheet = true },
+                        onOpenGamePickerSheet = { showGamePickerSheet = true }
                     )
                 }
-            }
 
-            // Card 4: Appearance & Material You Theme
-            item {
-                ExpandableConfigCard(
-                    title = "Appearance & Material You Theme",
-                    subtitle = "Dynamic color palette, profile tints, and pure black",
-                    icon = Icons.Rounded.Palette,
-                    initiallyExpanded = false
-                ) {
-                    ConfigSwitchRow(
-                        title = "Use Material You Dynamic Wallpaper Colors",
-                        subtitle = "Extracts colors directly from your Android wallpaper palette",
-                        checked = state.themePreferences.followSystemWallpaper,
-                        onCheckedChange = { checked ->
-                            stateManager.updateThemePreferences(state.themePreferences.copy(followSystemWallpaper = checked))
-                        },
-                        testTag = "switch_theme_dynamic"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "AMOLED Pure Black Mode",
-                        subtitle = "Pure black backgrounds for maximum battery savings on OLED",
-                        checked = state.themePreferences.amoledPureBlack,
-                        onCheckedChange = { checked ->
-                            stateManager.updateThemePreferences(state.themePreferences.copy(amoledPureBlack = checked))
-                        },
-                        testTag = "switch_theme_amoled"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ConfigSwitchRow(
-                        title = "Dim Lock Screen During Sleep/DND",
-                        subtitle = "Generates minimalist dark slate status wallpaper on lock screen",
-                        checked = state.dimLockScreenEnabled,
-                        onCheckedChange = { stateManager.setDimLockScreenEnabled(it) },
-                        testTag = "switch_dim_lock_screen"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    InteractiveAppIconPreviewRow()
-                }
-            }
-
-            // Card 5: System Permissions Checklist Card
-            item {
-                ExpandableConfigCard(
-                    title = "System Permissions Checklist",
-                    subtitle = "Interactive checklist for hardware and Android services",
-                    icon = Icons.Rounded.Security,
-                    initiallyExpanded = true
-                ) {
-                    PermissionStatusRow(
-                        title = "Notification Listener Access",
-                        description = "Required to intercept and actively decline cellular and VoIP calls and auto-reply.",
-                        isGranted = hasNotificationListener,
-                        actionLabel = "Enable",
-                        onAction = {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                            }
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    PermissionStatusRow(
-                        title = "DND Interruption Policy",
-                        description = "Allows syncing Android interruption filter with focus profiles",
-                        isGranted = hasDndAccess,
-                        actionLabel = "Grant",
-                        onAction = {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-                            }
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    PermissionStatusRow(
-                        title = "Runtime Permissions",
-                        description = "Starred contacts lookup and push notifications",
-                        isGranted = hasRuntimePermissions,
-                        actionLabel = "Grant",
-                        onAction = {
+                SentinalWorkspaceTab.SYSTEM -> {
+                    SystemAndThemeTab(
+                        state = state,
+                        stateManager = stateManager,
+                        hasNotificationListener = hasNotificationListener,
+                        hasDndAccess = hasDndAccess,
+                        hasRuntimePermissions = hasRuntimePermissions,
+                        hasBatteryExemption = hasBatteryExemption,
+                        hasUsageStatsAccess = hasUsageStatsAccess,
+                        grantedPermissionsCount = grantedPermissionsCount,
+                        onRequestRuntimePermissions = {
                             val perms = mutableListOf(Manifest.permission.READ_CONTACTS)
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 perms.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -615,46 +492,7 @@ fun ZenShieldDashboardScreen(
                             permissionsLauncher.launch(perms.toTypedArray())
                         }
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    PermissionStatusRow(
-                        title = "Battery Optimization Exemption",
-                        description = "Prevents OEM battery killers from terminating call and notification guards",
-                        isGranted = hasBatteryExemption,
-                        actionLabel = "Exempt",
-                        onAction = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                runCatching {
-                                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                        data = Uri.parse("package:${context.packageName}")
-                                    }
-                                    context.startActivity(intent)
-                                }.onFailure {
-                                    runCatching {
-                                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                                    }
-                                }
-                            }
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    PermissionStatusRow(
-                        title = "Usage Stats Access",
-                        description = "Required to detect real-time game launches and auto-engage Gaming profile",
-                        isGranted = hasUsageStatsAccess,
-                        actionLabel = "Grant",
-                        onAction = {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                })
-                            }
-                        }
-                    )
                 }
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
@@ -683,11 +521,714 @@ fun ZenShieldDashboardScreen(
 }
 
 @Composable
+private fun ShieldCommandCenterTab(
+    state: FocusSessionState,
+    activeProfile: FocusProfile,
+    headerBgColor: Color,
+    weeklySilencedTotal: Int,
+    weeklyCallsTotal: Int,
+    grantedPermissionsCount: Int,
+    stateManager: FocusStateManager,
+    onOpenAnalyticsTab: () -> Unit,
+    onOpenRulesTab: () -> Unit,
+    onOpenSystemTab: () -> Unit
+) {
+    val context = LocalContext.current
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // 1. Hero Status Header Card
+        item {
+            HeroStatusHeaderCard(
+                state = state,
+                activeProfile = activeProfile,
+                headerBgColor = headerBgColor,
+                onDurationSelected = { duration ->
+                    stateManager.setDuration(duration)
+                },
+                onAdjustMinutes = { deltaMinutes ->
+                    stateManager.adjustRemainingTime(context, deltaMinutes.toLong())
+                },
+                onToggleFocus = {
+                    stateManager.resetSessionCaches()
+                    if (activeProfile == FocusProfile.OFF) {
+                        stateManager.setProfile(FocusProfile.DO_NOT_DISTURB, state.durationOption)
+                    } else {
+                        stateManager.setProfile(FocusProfile.OFF)
+                    }
+                }
+            )
+        }
+
+        // 2. Permission Readiness Banner (if any system permission is not yet granted)
+        if (grantedPermissionsCount < 5) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenSystemTab() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Security,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = "System Guard Readiness: $grantedPermissionsCount/5 Active",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = "Tap to review Notification Listener, DND & Call Screening permissions",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 2x2 Bento Focus Profile Selector Grid + Off Status Chip
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Focus Mode Matrix",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (activeProfile != FocusProfile.OFF) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .clickable {
+                                stateManager.resetSessionCaches()
+                                stateManager.setProfile(FocusProfile.OFF)
+                            }
+                            .testTag("profile_chip_off")
+                    ) {
+                        Text(
+                            text = "Turn Off Shield",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            FocusProfileBentoGrid(
+                activeProfile = activeProfile,
+                onProfileSelected = { profile ->
+                    stateManager.resetSessionCaches()
+                    stateManager.setProfile(profile, state.durationOption)
+                }
+            )
+        }
+
+        // 4. Compact Telemetry Snapshot Banner -> Jumps to Analytics Tab
+        item {
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenAnalyticsTab() },
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.BarChart,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = "Weekly Telemetry Pulse",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Auto-replies restricted strictly to declined calls",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Open Chart →",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        QuickStatPill(
+                            label = "7-Day Alerts Silenced",
+                            value = weeklySilencedTotal.toString(),
+                            accentColor = Color(0xFF38EF7D),
+                            icon = Icons.Rounded.NotificationsOff,
+                            modifier = Modifier.weight(1f)
+                        )
+                        QuickStatPill(
+                            label = "7-Day Calls Declined",
+                            value = weeklyCallsTotal.toString(),
+                            accentColor = Color(0xFF00D2FF),
+                            icon = Icons.Rounded.PhoneCallback,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. Active Protection Summary Card -> Jumps to Rules Tab
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenRulesTab() },
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Tune,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Column {
+                            Text(
+                                text = "Call Bouncer & Game Auto-Lockdown",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = buildString {
+                                    append(if (state.autoReplyEnabled) "Call Auto-Reply ON" else "Call Auto-Reply OFF")
+                                    append(" • ")
+                                    append(if (state.autoGameDetectionEnabled) "Game Detector ON" else "Game Detector OFF")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Configure",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickStatPill(
+    label: String,
+    value: String,
+    accentColor: Color,
+    icon: ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(20.dp)
+            )
+            Column {
+                Text(
+                    text = value,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalyticsTelemetryTab(
+    state: FocusSessionState,
+    stateManager: FocusStateManager
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // 1. Primary Recharts-Style Weekly Telemetry Card
+        item {
+            WeeklyShieldStatsCard(stateManager = stateManager)
+        }
+
+        // 2. Current Session Guard Policy Breakdown
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Dispatch & Suppression Telemetry Policy",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "• Declined Incoming Calls: Automatically dispatches your profile auto-reply message (30-min per-caller cooldown).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• Outgoing Calls Placed by You: Tracked and exempted so recipients you dial never receive an automated focus reply.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• Incoming Chat & SMS Messages: Quietly silenced and dismissed during active Focus without sending automated replies.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "All-Time Blocked: ${state.totalShieldedCalls} Calls • ${state.totalShieldedNotifications} Alerts",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        TextButton(
+                            onClick = { stateManager.resetSessionCaches() }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Reset Cooldowns")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RulesAndBouncerTab(
+    state: FocusSessionState,
+    stateManager: FocusStateManager,
+    onOpenAutoReplySheet: () -> Unit,
+    onOpenGamePickerSheet: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // 1. Call Auto-Reply Customization Card
+        item {
+            VoipAutoReplyCustomizationCard(
+                state = state,
+                stateManager = stateManager,
+                onOpenCustomizeSheet = onOpenAutoReplySheet
+            )
+        }
+
+        // 2. Real-Time Game Launch Detector & 30s Exit Grace Countdown
+        item {
+            GameDetectionCard(
+                state = state,
+                stateManager = stateManager,
+                onOpenAppPicker = onOpenGamePickerSheet
+            )
+        }
+
+        // 3. Active Call & VoIP Bouncer
+        item {
+            ExpandableConfigCard(
+                title = "Active Call & VoIP Bouncer",
+                subtitle = "Network-level rejection & 3-minute repeat breakthrough",
+                icon = Icons.Rounded.Phone,
+                initiallyExpanded = true
+            ) {
+                ConfigSwitchRow(
+                    title = "Decline All Calls Regardless of Condition",
+                    subtitle = "Zero-tolerance lockdown: automatically drops all incoming cellular and VoIP calls, ignoring starred contacts and repeat callers",
+                    checked = state.declineAllCallsRegardless,
+                    onCheckedChange = { stateManager.setDeclineAllCallsRegardless(it) },
+                    testTag = "switch_decline_all_calls_regardless"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Network-Level Call Rejection (Instant User Busy)",
+                    subtitle = "Sends immediate busy signal to tower without ringing",
+                    checked = state.networkLevelCallRejection,
+                    onCheckedChange = { stateManager.setNetworkLevelCallRejectionEnabled(it) },
+                    testTag = "switch_network_rejection"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Auto-Decline WhatsApp/Telegram Calls",
+                    subtitle = "Hangs up third-party VoIP calls via programmatic action intent",
+                    checked = state.autoDeclineVoipCalls,
+                    onCheckedChange = { stateManager.setAutoDeclineVoipCallsEnabled(it) },
+                    testTag = "switch_voip_bouncer"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "3-Minute Repeat Caller Breakthrough",
+                    subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Second call within 180s rings out loud for real emergencies",
+                    checked = state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
+                    onCheckedChange = { stateManager.setAllowRepeatCallersEnabled(it) },
+                    testTag = "switch_repeat_breakthrough"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Allow Starred Contacts",
+                    subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Passes priority contacts through cellular & VoIP filters",
+                    checked = state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
+                    onCheckedChange = { checked ->
+                        stateManager.updateProfileSettings(checked, state.blockRepeatedCallers, state.silenceNotifications)
+                    },
+                    testTag = "switch_allow_starred"
+                )
+            }
+        }
+
+        // 4. Gaming Mode Lockdown
+        item {
+            ExpandableConfigCard(
+                title = "Gaming Mode Lockdown",
+                subtitle = "Zero latency, zero popups, uninterrupted gaming",
+                icon = Icons.Rounded.SportsEsports,
+                initiallyExpanded = true
+            ) {
+                ConfigSwitchRow(
+                    title = "Auto-Activate Game Mode DND on Game Launch",
+                    subtitle = "Automatically transitions to Gaming DND whenever any game launches, and restores previous profile 30s after exit",
+                    checked = state.autoGameDetectionEnabled,
+                    onCheckedChange = { stateManager.setAutoGameDetectionEnabled(it) },
+                    testTag = "switch_auto_activate_game_dnd"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Auto-Decline WhatsApp & VoIP Calls in Game",
+                    subtitle = "Immediately drops VoIP calls in background during gaming",
+                    checked = state.autoDeclineVoipInGame,
+                    onCheckedChange = { stateManager.setAutoDeclineVoipInGameEnabled(it) },
+                    testTag = "switch_gaming_voip"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Block Cellular Calls (Including Starred)",
+                    subtitle = "Overrides priority contacts so you are never kicked out of match",
+                    checked = state.strictGamingLockdownEnabled,
+                    onCheckedChange = { stateManager.setStrictGamingLockdownEnabled(it) },
+                    testTag = "switch_gaming_lockdown"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Suppress All Heads-Up Banners",
+                    subtitle = "Blocks intrusive overlay banners while gaming",
+                    checked = state.suppressHeadsUpBanners,
+                    onCheckedChange = { stateManager.setSuppressHeadsUpBannersEnabled(it) },
+                    testTag = "switch_gaming_heads_up"
+                )
+            }
+        }
+
+        // 5. Smart Breakthrough & Emergency Scanner
+        item {
+            ExpandableConfigCard(
+                title = "Smart Breakthrough & Emergency Scanner",
+                subtitle = "Scans critical OTPs, ride drivers, and emergency text alerts",
+                icon = Icons.Rounded.Notifications,
+                initiallyExpanded = true
+            ) {
+                ConfigSwitchRow(
+                    title = "OTP, Ride & 'URGENT' Keyword Breakthrough",
+                    subtitle = "Allows 2FA codes, delivery drivers, and emergency text alerts while keeping regular messages silent",
+                    checked = state.smartUrgentBreakthroughEnabled,
+                    onCheckedChange = { stateManager.setSmartUrgentBreakthroughEnabled(it) },
+                    testTag = "switch_smart_urgent"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SystemAndThemeTab(
+    state: FocusSessionState,
+    stateManager: FocusStateManager,
+    hasNotificationListener: Boolean,
+    hasDndAccess: Boolean,
+    hasRuntimePermissions: Boolean,
+    hasBatteryExemption: Boolean,
+    hasUsageStatsAccess: Boolean,
+    grantedPermissionsCount: Int,
+    onRequestRuntimePermissions: () -> Unit
+) {
+    val context = LocalContext.current
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // 1. Material You Theme & Adaptive Icon Studio
+        item {
+            ExpandableConfigCard(
+                title = "Appearance & Material You Theme",
+                subtitle = "Dynamic color palette, profile tints, and pure black",
+                icon = Icons.Rounded.Palette,
+                initiallyExpanded = true
+            ) {
+                ConfigSwitchRow(
+                    title = "Use Material You Dynamic Wallpaper Colors",
+                    subtitle = "Extracts colors directly from your Android 12+ wallpaper palette",
+                    checked = state.themePreferences.followSystemWallpaper,
+                    onCheckedChange = { checked ->
+                        stateManager.updateThemePreferences(state.themePreferences.copy(followSystemWallpaper = checked))
+                    },
+                    testTag = "switch_theme_dynamic"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Profile-Tinted Dynamic Accents",
+                    subtitle = "Shifts primary accent color to match active Focus mode",
+                    checked = state.themePreferences.profileTintedAccent,
+                    onCheckedChange = { checked ->
+                        stateManager.updateThemePreferences(state.themePreferences.copy(profileTintedAccent = checked))
+                    },
+                    testTag = "switch_theme_profile_tint"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "AMOLED Pure Black Mode",
+                    subtitle = "Pure black backgrounds for maximum battery savings on OLED",
+                    checked = state.themePreferences.amoledPureBlack,
+                    onCheckedChange = { checked ->
+                        stateManager.updateThemePreferences(state.themePreferences.copy(amoledPureBlack = checked))
+                    },
+                    testTag = "switch_theme_amoled"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Dim Lock Screen During Sleep/DND",
+                    subtitle = "Generates minimalist dark slate status wallpaper on lock screen",
+                    checked = state.dimLockScreenEnabled,
+                    onCheckedChange = { stateManager.setDimLockScreenEnabled(it) },
+                    testTag = "switch_dim_lock_screen"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                InteractiveAppIconPreviewRow()
+            }
+        }
+
+        // 2. System Permissions Checklist Card
+        item {
+            ExpandableConfigCard(
+                title = "System Permissions Checklist ($grantedPermissionsCount/5)",
+                subtitle = "Interactive checklist for hardware and Android services",
+                icon = Icons.Rounded.Security,
+                initiallyExpanded = true
+            ) {
+                PermissionStatusRow(
+                    title = "Notification Listener Access",
+                    description = "Required to silence alerts, detect declined calls, and send call auto-replies.",
+                    isGranted = hasNotificationListener,
+                    actionLabel = "Enable",
+                    onAction = {
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "DND Interruption Policy",
+                    description = "Allows syncing Android interruption filter with focus profiles",
+                    isGranted = hasDndAccess,
+                    actionLabel = "Grant",
+                    onAction = {
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Runtime Permissions",
+                    description = "Starred contacts lookup and push notifications",
+                    isGranted = hasRuntimePermissions,
+                    actionLabel = "Grant",
+                    onAction = onRequestRuntimePermissions
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Battery Optimization Exemption",
+                    description = "Prevents OEM battery killers from terminating call and notification guards",
+                    isGranted = hasBatteryExemption,
+                    actionLabel = "Exempt",
+                    onAction = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            runCatching {
+                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            }.onFailure {
+                                runCatching {
+                                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                }
+                            }
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Usage Stats Access",
+                    description = "Required to detect real-time game launches and auto-engage Gaming profile",
+                    isGranted = hasUsageStatsAccess,
+                    actionLabel = "Grant",
+                    onAction = {
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            })
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun HeroStatusHeaderCard(
     state: FocusSessionState,
     activeProfile: FocusProfile = state.activeProfile,
     headerBgColor: Color,
     onDurationSelected: (DurationOption) -> Unit,
+    onAdjustMinutes: (Int) -> Unit = {},
     onToggleFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -720,253 +1261,371 @@ fun HeroStatusHeaderCard(
         colors = CardDefaults.elevatedCardColors(containerColor = headerBgColor),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = if (isActive) 0.16f else 0.06f),
+                            Color.Transparent
+                        ),
+                        radius = 650f
+                    )
+                )
         ) {
-            // Profile & Glowing Status Badge
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Profile & Glowing Status Badge
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color.Transparent,
+                            modifier = Modifier.size(54.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (activeProfile == FocusProfile.OFF) {
+                                    Image(
+                                        painter = painterResource(
+                                            if (isSystemInDarkTheme()) R.drawable.sentinal_icon_dark else R.drawable.sentinal_icon_light
+                                        ),
+                                        contentDescription = "Sentinal App Icon",
+                                        modifier = Modifier
+                                            .size(54.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                    )
+                                } else {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(54.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = when (activeProfile) {
+                                                    FocusProfile.OFF -> Icons.Rounded.Shield
+                                                    FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
+                                                    FocusProfile.GAMING -> Icons.Rounded.SportsEsports
+                                                    FocusProfile.WORK -> Icons.Rounded.Work
+                                                    FocusProfile.SLEEP -> Icons.Rounded.Bedtime
+                                                },
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(28.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Column {
+                            Text(
+                                text = if (isActive) activeProfile.displayName else "Shield Standby",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (isActive) activeProfile.subtitle else "Select a profile below or tap Activate",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Glowing Status Badge
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isActive) Color(0xFF38EF7D).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(
+                            1.5.dp,
+                            if (isActive) Color(0xFF38EF7D) else Color.Gray.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.padding(start = 6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isActive) Color(0xFF38EF7D) else Color.Gray)
+                            )
+                            Text(
+                                text = if (isActive) "ACTIVE" else "STANDBY",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+
+                // Live Countdown + Quick -15m / +15m Adjusters when Active
+                if (isActive) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color.Transparent,
-                        modifier = Modifier.size(52.dp)
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (activeProfile == FocusProfile.OFF) {
-                                Image(
-                                    painter = painterResource(
-                                        if (isSystemInDarkTheme()) R.drawable.sentinal_icon_dark else R.drawable.sentinal_icon_light
-                                    ),
-                                    contentDescription = "Sentinal App Icon",
-                                    modifier = Modifier
-                                        .size(52.dp)
-                                        .clip(RoundedCornerShape(14.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Timer,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
                                 )
-                            } else {
+                                Text(
+                                    text = if (state.expiresAtMillis != null) {
+                                        val hours = remainingSeconds / 3600
+                                        val minutes = (remainingSeconds % 3600) / 60
+                                        val seconds = remainingSeconds % 60
+                                        if (hours > 0) {
+                                            String.format("%02d:%02d:%02d", hours, minutes, seconds)
+                                        } else {
+                                            String.format("%02d:%02d", minutes, seconds)
+                                        }
+                                    } else {
+                                        "UNTIL TURNED OFF"
+                                    },
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(52.dp)
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier
+                                        .clickable { onAdjustMinutes(-15) }
+                                        .testTag("btn_timer_minus_15")
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Icon(
-                                            imageVector = when (activeProfile) {
-                                                FocusProfile.OFF -> Icons.Rounded.Shield
-                                                FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
-                                                FocusProfile.GAMING -> Icons.Rounded.SportsEsports
-                                                FocusProfile.WORK -> Icons.Rounded.Work
-                                                FocusProfile.SLEEP -> Icons.Rounded.Bedtime
-                                            },
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(28.dp)
+                                            imageVector = Icons.Rounded.Remove,
+                                            contentDescription = "Subtract 15 minutes",
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "15m",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier
+                                        .clickable { onAdjustMinutes(15) }
+                                        .testTag("btn_timer_plus_15")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Add,
+                                            contentDescription = "Add 15 minutes",
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "15m",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
                                         )
                                     }
                                 }
                             }
                         }
                     }
-
-                    Column {
-                        Text(
-                            text = if (isActive) activeProfile.displayName else "Shield Inactive",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (isActive) activeProfile.subtitle else "Tap a profile below to activate focus",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
 
-                // Glowing Status Badge
-                Surface(
-                    shape = CircleShape,
-                    color = if (isActive) Color(0xFF38EF7D).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.5.dp,
-                        if (isActive) Color(0xFF38EF7D) else Color.Gray.copy(alpha = 0.5f)
-                    ),
-                    modifier = Modifier.padding(start = 4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isActive) Color(0xFF38EF7D) else Color.Gray)
-                        )
-                        Text(
-                            text = if (isActive) "ACTIVE" else "OFF",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-
-            // Countdown timer indicator
-            if (isActive) {
+                // Quick Duration Pills: 1h, 2h, Until Turned Off
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Timer,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
+                    listOf(
+                        DurationOption.FOR_ONE_HOUR to "1h",
+                        DurationOption.FOR_TWO_HOURS to "2h",
+                        DurationOption.UNTIL_TURNED_OFF to "Until Turned Off"
+                    ).forEach { (opt, label) ->
+                        val isSelected = state.durationOption == opt
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { onDurationSelected(opt) },
+                            label = {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier.weight(if (label == "Until Turned Off") 1.4f else 0.8f)
+                        )
+                    }
+                }
+
+                // Primary Action Button
+                Button(
+                    onClick = onToggleFocus,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("hero_toggle_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        contentColor = if (isActive) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
                     )
+                ) {
                     Text(
-                        text = if (state.expiresAtMillis != null) {
-                            val hours = remainingSeconds / 3600
-                            val minutes = (remainingSeconds % 3600) / 60
-                            val seconds = remainingSeconds % 60
-                            if (hours > 0) {
-                                String.format("%02d:%02d:%02d remaining", hours, minutes, seconds)
-                            } else {
-                                String.format("%02d:%02d remaining", minutes, seconds)
-                            }
-                        } else {
-                            "Active until turned off"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = if (isActive) "Deactivate Sentinal Shield" else "Activate Focus Shield",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
                     )
                 }
-            }
-
-            // Quick Duration Pills: 1h, 2h, Until Turned Off
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(
-                    DurationOption.FOR_ONE_HOUR to "1h",
-                    DurationOption.FOR_TWO_HOURS to "2h",
-                    DurationOption.UNTIL_TURNED_OFF to "Until Turned Off"
-                ).forEach { (opt, label) ->
-                    val isSelected = state.durationOption == opt
-                    FilterChip(
-                        selected = isSelected,
-                        onClick = { onDurationSelected(opt) },
-                        label = {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier.weight(if (label == "Until Turned Off") 1.4f else 0.8f)
-                    )
-                }
-            }
-
-            // Big Toggle Button
-            Button(
-                onClick = onToggleFocus,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("hero_toggle_button"),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    contentColor = if (isActive) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
-                )
-            ) {
-                Text(
-                    text = if (isActive) "Deactivate Sentinal" else "Activate Focus Shield",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }
 }
 
 @Composable
-fun HorizontalProfileCarousel(
+fun FocusProfileBentoGrid(
     activeProfile: FocusProfile,
     onProfileSelected: (FocusProfile) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        listOf(
-            FocusProfile.OFF to Icons.Rounded.Shield,
-            FocusProfile.DO_NOT_DISTURB to Icons.Rounded.DoNotDisturbOn,
-            FocusProfile.GAMING to Icons.Rounded.SportsEsports,
-            FocusProfile.WORK to Icons.Rounded.Work,
-            FocusProfile.SLEEP to Icons.Rounded.Bedtime
-        ).forEach { (profile, icon) ->
-            val isSelected = activeProfile == profile
-            val testTag = "profile_chip_${profile.id.lowercase()}"
+    val profiles = listOf(
+        Triple(FocusProfile.DO_NOT_DISTURB, Icons.Rounded.DoNotDisturbOn, "Silences notifications & declines calls"),
+        Triple(FocusProfile.GAMING, Icons.Rounded.SportsEsports, "Zero popups, VoIP bouncer & 30s exit grace"),
+        Triple(FocusProfile.WORK, Icons.Rounded.Work, "Deep focus with starred contact priority"),
+        Triple(FocusProfile.SLEEP, Icons.Rounded.Bedtime, "Restful night shield with lock screen dim")
+    )
 
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-                modifier = Modifier
-                    .width(130.dp)
-                    .clickable { onProfileSelected(profile) }
-                    .testTag(testTag)
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        profiles.chunked(2).forEach { rowItems ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalAlignment = Alignment.Start
-                ) {
+                rowItems.forEach { (profile, icon, summary) ->
+                    val isSelected = activeProfile == profile
+                    val testTag = "profile_chip_${profile.id.lowercase()}"
+
                     Surface(
-                        shape = CircleShape,
-                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.size(36.dp)
+                        shape = RoundedCornerShape(22.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onProfileSelected(profile) }
+                            .testTag(testTag)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = null,
+                                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+
+                                if (isSelected) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0xFF38EF7D).copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = "ON",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF38EF7D),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = profile.displayName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = summary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-
-                    Text(
-                        text = profile.displayName,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                    )
                 }
             }
         }
@@ -1004,7 +1663,9 @@ fun VoipAutoReplyCustomizationCard(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
                 ) {
                     Surface(
                         shape = CircleShape,
@@ -1013,7 +1674,7 @@ fun VoipAutoReplyCustomizationCard(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Rounded.Notifications,
+                                imageVector = Icons.Rounded.PhoneCallback,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(22.dp)
@@ -1023,13 +1684,13 @@ fun VoipAutoReplyCustomizationCard(
 
                     Column {
                         Text(
-                            text = "VoIP Auto-Reply Customization",
+                            text = "Declined Call Auto-Reply",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Auto-replies via in-app RemoteInput when VoIP calls are bounced",
+                            text = "Replies strictly to declined incoming calls (never to outgoing calls or regular messages)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1112,7 +1773,9 @@ fun VoipAutoReplyCustomizationCard(
                             fontWeight = FontWeight.Medium,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
                         )
 
                         TextButton(
@@ -1137,11 +1800,6 @@ fun VoipAutoReplyCustomizationCard(
     }
 }
 
-/**
- * InteractiveAppIconPreviewRow: Interactive showcase allowing the user to view, test,
- * and interact with the new Sentinal app icon for both Light Mode (gold sun-moon)
- * and Dark Mode (cyan crescent moon).
- */
 @Composable
 fun InteractiveAppIconPreviewRow(
     modifier: Modifier = Modifier
@@ -1197,7 +1855,6 @@ fun InteractiveAppIconPreviewRow(
             horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Light mode icon option
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1230,7 +1887,6 @@ fun InteractiveAppIconPreviewRow(
                 )
             }
 
-            // Dark mode icon option
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),

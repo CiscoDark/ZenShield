@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,19 +26,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,8 +55,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -61,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import com.example.core.DailyShieldStats
 import com.example.core.FocusStateManager
 import com.example.core.WeeklyShieldSummary
+import com.example.ui.theme.JetBrainsMonoFontFamily
 
 private enum class ChartMetricFilter {
     ALL,
@@ -70,40 +80,43 @@ private enum class ChartMetricFilter {
 
 /**
  * Recharts-inspired Interactive Data Visualization Component for Jetpack Compose.
- * Displays summary statistics and interactive dual-bar graphs of silenced notifications
- * and declined calls over the week with live tooltips, filters, and daily breakdowns.
+ * Combines smooth spline area overlays with dual-column bar charts, Y-axis scale ticks,
+ * interactive floating tooltips, metric filters, and real-time simulation triggers.
  */
 @Composable
 fun WeeklyShieldStatsCard(
     stateManager: FocusStateManager,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showSimulationControls: Boolean = true
 ) {
     val summary by stateManager.weeklyStatsFlow.collectAsState()
     var selectedMetricFilter by remember { mutableStateOf(ChartMetricFilter.ALL) }
     var selectedDayIndex by remember {
-        // Default to today (last index in 7-day window)
-        mutableIntStateOf(summary.days.size - 1)
+        mutableIntStateOf((summary.days.size - 1).coerceAtLeast(0))
     }
-    var isBreakdownExpanded by remember { mutableStateOf(false) }
+    var isBreakdownExpanded by remember { mutableStateOf(true) }
 
-    // Ensure selectedDayIndex remains within bounds if list size shifts
-    val activeIndex = if (selectedDayIndex in summary.days.indices) selectedDayIndex else (summary.days.size - 1).coerceAtLeast(0)
+    val activeIndex = if (selectedDayIndex in summary.days.indices) {
+        selectedDayIndex
+    } else {
+        (summary.days.size - 1).coerceAtLeast(0)
+    }
     val selectedDay: DailyShieldStats? = summary.days.getOrNull(activeIndex)
 
     Card(
         modifier = modifier
             .fillMaxWidth()
             .testTag("weekly_stats_card"),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
+                .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header: Title & Metric Filter Chips
+            // Header: Title & Live Status Pill
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -111,19 +124,19 @@ fun WeeklyShieldStatsCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Surface(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(44.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Filled.BarChart,
                                 contentDescription = "Shield Statistics",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
@@ -135,9 +148,33 @@ fun WeeklyShieldStatsCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Silenced alerts vs declined calls",
+                            text = "7-day silenced alerts & declined calls",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Bolt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Peak: ${summary.peakDayLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     }
                 }
@@ -151,39 +188,45 @@ fun WeeklyShieldStatsCard(
                 FilterChip(
                     selected = selectedMetricFilter == ChartMetricFilter.ALL,
                     onClick = { selectedMetricFilter = ChartMetricFilter.ALL },
-                    label = { Text("All (Combined)", style = MaterialTheme.typography.labelSmall) },
+                    label = { Text("Combined", style = MaterialTheme.typography.labelMedium) },
                     shape = RoundedCornerShape(12.dp),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                     ),
-                    modifier = Modifier.testTag("filter_chip_all")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("filter_chip_all")
                 )
                 FilterChip(
                     selected = selectedMetricFilter == ChartMetricFilter.NOTIFICATIONS,
                     onClick = { selectedMetricFilter = ChartMetricFilter.NOTIFICATIONS },
-                    label = { Text("Alerts Only", style = MaterialTheme.typography.labelSmall) },
+                    label = { Text("Alerts", style = MaterialTheme.typography.labelMedium) },
                     shape = RoundedCornerShape(12.dp),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                     ),
-                    modifier = Modifier.testTag("filter_chip_notifs")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("filter_chip_notifs")
                 )
                 FilterChip(
                     selected = selectedMetricFilter == ChartMetricFilter.CALLS,
                     onClick = { selectedMetricFilter = ChartMetricFilter.CALLS },
-                    label = { Text("Calls Only", style = MaterialTheme.typography.labelSmall) },
+                    label = { Text("Calls", style = MaterialTheme.typography.labelMedium) },
                     shape = RoundedCornerShape(12.dp),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer
                     ),
-                    modifier = Modifier.testTag("filter_chip_calls")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("filter_chip_calls")
                 )
             }
 
-            // KPI Summary Row (Weekly totals & peak day)
+            // KPI Summary Row (Weekly totals & averages)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -200,14 +243,14 @@ fun WeeklyShieldStatsCard(
                 KpiMetricCard(
                     title = "Declined Calls",
                     value = summary.totalDeclinedCalls.toString(),
-                    subtitle = "Peak on ${summary.peakDayLabel}",
+                    subtitle = "Avg ${String.format("%.1f", summary.averageCallsPerDay)} / day",
                     icon = Icons.Filled.PhoneDisabled,
                     accentColor = MaterialTheme.colorScheme.tertiary,
                     modifier = Modifier.weight(1f)
                 )
             }
 
-            // Interactive Tooltip Card (Recharts style floating pill)
+            // Interactive Tooltip Card (Recharts style floating inspect pill)
             selectedDay?.let { day ->
                 RechartsTooltipPill(
                     day = day,
@@ -216,22 +259,88 @@ fun WeeklyShieldStatsCard(
                 )
             }
 
-            // Dual-Bar Chart Canvas & Layout
-            RechartsDualBarChart(
-                summary = summary,
-                filter = selectedMetricFilter,
-                selectedDayIndex = activeIndex,
-                onDaySelected = { selectedDayIndex = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-            )
-
-            // Chart Legend
-            ChartLegendRow(
-                filter = selectedMetricFilter,
+            // Dual-Bar + Trend Curve Chart Canvas & Layout
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
                 modifier = Modifier.fillMaxWidth()
-            )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    RechartsDualBarChart(
+                        summary = summary,
+                        filter = selectedMetricFilter,
+                        selectedDayIndex = activeIndex,
+                        onDaySelected = { selectedDayIndex = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(190.dp)
+                    )
+
+                    ChartLegendRow(
+                        filter = selectedMetricFilter,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            // Quick Live Telemetry Test Controls
+            if (showSimulationControls) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            stateManager.incrementShieldedNotification()
+                            selectedDayIndex = (summary.days.size - 1).coerceAtLeast(0)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("simulate_silenced_notif_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Log Alert",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            stateManager.incrementShieldedCall()
+                            selectedDayIndex = (summary.days.size - 1).coerceAtLeast(0)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("simulate_declined_call_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Log Call",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
@@ -240,31 +349,31 @@ fun WeeklyShieldStatsCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { isBreakdownExpanded = !isBreakdownExpanded }
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.TrendingUp,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = "Daily Breakdown Details",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
+                        text = "7-Day Activity Log",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
                 IconButton(
                     onClick = { isBreakdownExpanded = !isBreakdownExpanded },
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         imageVector = if (isBreakdownExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
@@ -279,6 +388,7 @@ fun WeeklyShieldStatsCard(
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
+                val maxDayTotal = (summary.days.maxOfOrNull { it.silencedNotifications + it.declinedCalls } ?: 1).coerceAtLeast(1)
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -286,6 +396,7 @@ fun WeeklyShieldStatsCard(
                     summary.days.forEachIndexed { index, day ->
                         DailyBreakdownRow(
                             day = day,
+                            maxTotal = maxDayTotal,
                             isSelected = (index == activeIndex),
                             onClick = { selectedDayIndex = index }
                         )
@@ -307,64 +418,69 @@ private fun RechartsTooltipPill(
 ) {
     Surface(
         modifier = modifier.testTag("chart_tooltip"),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+        )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         text = day.dayFull,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     if (day.isToday) {
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                            color = MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Text(
                                 text = "TODAY",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.ExtraBold),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
                 Text(
-                    text = "Tap any bar to inspect daily stats",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    text = "${day.silencedNotifications + day.declinedCalls} total distractions blocked",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (filter != ChartMetricFilter.CALLS) {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = "${day.silencedNotifications}",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMonoFontFamily),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Silenced",
+                            text = "Alerts",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -375,7 +491,7 @@ private fun RechartsTooltipPill(
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = "${day.declinedCalls}",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = JetBrainsMonoFontFamily),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.tertiary
                         )
@@ -392,9 +508,7 @@ private fun RechartsTooltipPill(
 }
 
 /**
- * Recharts Dual Bar Chart layout in pure Jetpack Compose.
- * Calculates proportional bar heights with smooth spring animations,
- * reference grid lines, and interactive selection.
+ * Recharts Dual Bar + Smooth Area Trend Line Chart in Jetpack Compose.
  */
 @Composable
 private fun RechartsDualBarChart(
@@ -407,7 +521,6 @@ private fun RechartsDualBarChart(
     val days = summary.days
     if (days.isEmpty()) return
 
-    // Find highest value across the dataset to scale bars accurately
     val maxVal = remember(days, filter) {
         val peak = days.maxOfOrNull { day ->
             when (filter) {
@@ -416,149 +529,234 @@ private fun RechartsDualBarChart(
                 ChartMetricFilter.CALLS -> day.declinedCalls
             }
         } ?: 10
-        peak.coerceAtLeast(10)
+        peak.coerceAtLeast(8)
     }
 
-    Box(
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val tertiaryColor = MaterialTheme.colorScheme.tertiary
+    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("recharts_dual_bar_chart")
+            .testTag("recharts_dual_bar_chart"),
+        verticalAlignment = Alignment.Bottom
     ) {
-        // Background Grid Lines (Recharts style reference guide)
+        // Y-Axis Scale Labels
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .fillMaxHeight()
+                .padding(bottom = 28.dp, end = 6.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.End
         ) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            Text(
+                text = "$maxVal",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "${maxVal / 2}",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "0",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
-        // Chart Bars & Day Labels
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.Bottom
+        // Main Chart Plot Area
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
         ) {
-            days.forEachIndexed { index, day ->
-                val isSelected = (index == selectedDayIndex)
+            // Dashed Recharts Grid & Smooth Area Trend Backdrop
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 28.dp)
+            ) {
+                val dashEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f), 0f)
+                val h = size.height
+                val w = size.width
 
-                val notifRatio = (day.silencedNotifications.toFloat() / maxVal).coerceIn(0.04f, 1.0f)
-                val callsRatio = (day.declinedCalls.toFloat() / maxVal).coerceIn(0.04f, 1.0f)
+                // 3 horizontal grid lines (Top, Middle, Base)
+                listOf(0f, h * 0.5f, h).forEach { y ->
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(0f, y),
+                        end = Offset(w, y),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = if (y < h) dashEffect else null
+                    )
+                }
 
-                val animatedNotifHeight by animateFloatAsState(
-                    targetValue = if (filter == ChartMetricFilter.CALLS) 0f else notifRatio,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-                    label = "notif_bar_height"
-                )
+                // Draw subtle Recharts spline area curve behind bars
+                if (days.size > 1) {
+                    val stepX = w / days.size
+                    val points = days.mapIndexed { idx, d ->
+                        val v = if (filter == ChartMetricFilter.CALLS) d.declinedCalls else d.silencedNotifications
+                        val ratio = (v.toFloat() / maxVal).coerceIn(0f, 1f)
+                        Offset(stepX * idx + stepX / 2f, h * (1f - ratio))
+                    }
 
-                val animatedCallHeight by animateFloatAsState(
-                    targetValue = if (filter == ChartMetricFilter.NOTIFICATIONS) 0f else callsRatio,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-                    label = "call_bar_height"
-                )
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onDaySelected(index) }
-                        .testTag("chart_day_$index"),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Bottom
-                ) {
-                    // Bar pillars container
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.BottomCenter
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            // Silenced Notifications Bar (Primary Gradient)
-                            if (filter != ChartMetricFilter.CALLS) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(if (filter == ChartMetricFilter.ALL) 10.dp else 18.dp)
-                                        .fillMaxHeight(animatedNotifHeight)
-                                        .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp))
-                                        .background(
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    MaterialTheme.colorScheme.primary,
-                                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-                                                )
-                                            )
-                                        )
-                                        .then(
-                                            if (isSelected) Modifier.border(
-                                                1.dp,
-                                                MaterialTheme.colorScheme.onPrimaryContainer,
-                                                RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp)
-                                            ) else Modifier
-                                        )
-                                )
-                            }
-
-                            // Declined Calls Bar (Tertiary Gradient)
-                            if (filter != ChartMetricFilter.NOTIFICATIONS) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(if (filter == ChartMetricFilter.ALL) 10.dp else 18.dp)
-                                        .fillMaxHeight(animatedCallHeight)
-                                        .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp))
-                                        .background(
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    MaterialTheme.colorScheme.tertiary,
-                                                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
-                                                )
-                                            )
-                                        )
-                                        .then(
-                                            if (isSelected) Modifier.border(
-                                                1.dp,
-                                                MaterialTheme.colorScheme.onTertiaryContainer,
-                                                RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp)
-                                            ) else Modifier
-                                        )
-                                )
-                            }
+                    val linePath = Path().apply {
+                        moveTo(points.first().x, points.first().y)
+                        for (i in 0 until points.size - 1) {
+                            val p0 = points[i]
+                            val p1 = points[i + 1]
+                            val ctrlX = (p0.x + p1.x) / 2f
+                            cubicTo(ctrlX, p0.y, ctrlX, p1.y, p1.x, p1.y)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    val areaPath = Path().apply {
+                        addPath(linePath)
+                        lineTo(points.last().x, h)
+                        lineTo(points.first().x, h)
+                        close()
+                    }
 
-                    // X-Axis Day Label (with active pill if selected or today)
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = when {
-                            isSelected -> MaterialTheme.colorScheme.primaryContainer
-                            day.isToday -> MaterialTheme.colorScheme.surfaceVariant
-                            else -> Color.Transparent
-                        },
-                        modifier = Modifier.padding(horizontal = 2.dp)
-                    ) {
-                        Text(
-                            text = day.dayShort,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected || day.isToday) FontWeight.Bold else FontWeight.Medium
-                            ),
-                            color = when {
-                                isSelected -> MaterialTheme.colorScheme.onPrimaryContainer
-                                day.isToday -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    val curveColor = if (filter == ChartMetricFilter.CALLS) tertiaryColor else primaryColor
+                    drawPath(
+                        path = areaPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                curveColor.copy(alpha = 0.16f),
+                                curveColor.copy(alpha = 0.01f)
+                            )
                         )
+                    )
+                    drawPath(
+                        path = linePath,
+                        color = curveColor.copy(alpha = 0.45f),
+                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+            }
+
+            // Interactive Dual Bars & X-Axis Labels
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                days.forEachIndexed { index, day ->
+                    val isSelected = (index == selectedDayIndex)
+
+                    val notifRatio = (day.silencedNotifications.toFloat() / maxVal).coerceIn(0.05f, 1.0f)
+                    val callsRatio = (day.declinedCalls.toFloat() / maxVal).coerceIn(0.05f, 1.0f)
+
+                    val animatedNotifHeight by animateFloatAsState(
+                        targetValue = if (filter == ChartMetricFilter.CALLS) 0f else notifRatio,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "notif_bar_height"
+                    )
+
+                    val animatedCallHeight by animateFloatAsState(
+                        targetValue = if (filter == ChartMetricFilter.NOTIFICATIONS) 0f else callsRatio,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "call_bar_height"
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                else Color.Transparent
+                            )
+                            .clickable { onDaySelected(index) }
+                            .padding(top = 6.dp)
+                            .testTag("chart_day_$index"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.BottomCenter
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                // Silenced Notifications Bar
+                                if (filter != ChartMetricFilter.CALLS) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(if (filter == ChartMetricFilter.ALL) 11.dp else 18.dp)
+                                            .fillMaxHeight(animatedNotifHeight)
+                                            .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        MaterialTheme.colorScheme.primary,
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                                    )
+                                                )
+                                            )
+                                    )
+                                }
+
+                                // Declined Calls Bar
+                                if (filter != ChartMetricFilter.NOTIFICATIONS) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(if (filter == ChartMetricFilter.ALL) 11.dp else 18.dp)
+                                            .fillMaxHeight(animatedCallHeight)
+                                            .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        MaterialTheme.colorScheme.tertiary,
+                                                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f)
+                                                    )
+                                                )
+                                            )
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // X-Axis Day Label
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = when {
+                                isSelected -> MaterialTheme.colorScheme.primary
+                                day.isToday -> MaterialTheme.colorScheme.primaryContainer
+                                else -> Color.Transparent
+                            }
+                        ) {
+                            Text(
+                                text = day.dayShort,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected || day.isToday) FontWeight.Bold else FontWeight.Medium
+                                ),
+                                color = when {
+                                    isSelected -> MaterialTheme.colorScheme.onPrimary
+                                    day.isToday -> MaterialTheme.colorScheme.onPrimaryContainer
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -566,9 +764,6 @@ private fun RechartsDualBarChart(
     }
 }
 
-/**
- * Metric KPI Box for high-level statistics summary.
- */
 @Composable
 private fun KpiMetricCard(
     title: String,
@@ -579,12 +774,12 @@ private fun KpiMetricCard(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(
@@ -606,7 +801,7 @@ private fun KpiMetricCard(
 
             Text(
                 text = value,
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.headlineMedium.copy(fontFamily = JetBrainsMonoFontFamily),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -615,15 +810,12 @@ private fun KpiMetricCard(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                 color = accentColor,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
 }
 
-/**
- * Legend indicator row explaining color coding.
- */
 @Composable
 private fun ChartLegendRow(
     filter: ChartMetricFilter,
@@ -654,7 +846,7 @@ private fun ChartLegendRow(
         }
 
         if (filter == ChartMetricFilter.ALL) {
-            Spacer(modifier = Modifier.width(18.dp))
+            Spacer(modifier = Modifier.width(20.dp))
         }
 
         if (filter != ChartMetricFilter.NOTIFICATIONS) {
@@ -678,72 +870,86 @@ private fun ChartLegendRow(
     }
 }
 
-/**
- * Row displaying detailed numbers for a single day in the expandable breakdown.
- */
 @Composable
 private fun DailyBreakdownRow(
     day: DailyShieldStats,
+    maxTotal: Int,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val progress = ((day.silencedNotifications + day.declinedCalls).toFloat() / maxTotal).coerceIn(0.05f, 1f)
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = day.dayShort,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.width(36.dp)
-                )
-                if (day.isToday) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = "Today",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = day.dayShort,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.width(38.dp)
+                    )
+                    if (day.isToday) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "Today",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                            )
+                        }
                     }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = "${day.silencedNotifications} alerts",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${day.declinedCalls} calls",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = "🔔 ${day.silencedNotifications} alerts",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "📞 ${day.declinedCalls} calls",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiary,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .clip(CircleShape),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
         }
     }
 }
