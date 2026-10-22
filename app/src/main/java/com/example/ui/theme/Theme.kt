@@ -1,9 +1,13 @@
 package com.example.ui.theme
 
 import android.os.Build
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -11,6 +15,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.example.core.FocusProfile
 
 data class FocusThemePreferences(
@@ -18,6 +23,40 @@ data class FocusThemePreferences(
     val profileTintedAccent: Boolean = true,
     val amoledPureBlack: Boolean = false
 )
+
+/**
+ * Material 3 Expressive Shape Scale:
+ * Sculpted squircles through generous pill-like radii that pair with dynamic corner morphing.
+ */
+val ExpressiveShapes = Shapes(
+    extraSmall = RoundedCornerShape(12.dp),
+    small = RoundedCornerShape(18.dp),
+    medium = RoundedCornerShape(24.dp),
+    large = RoundedCornerShape(30.dp),
+    extraLarge = RoundedCornerShape(38.dp)
+)
+
+/**
+ * Material 3 Expressive Motion Tokens:
+ * Physics-based bouncy springs for spatial morphing (corner radius, scale, pill expansion)
+ * and smooth critically-damped springs for color/tonal transitions.
+ */
+object ExpressiveMotion {
+    fun <T> bouncySpatialSpring() = spring<T>(
+        dampingRatio = Spring.DampingRatioLowBouncy,
+        stiffness = Spring.StiffnessMediumLow
+    )
+
+    fun <T> snappySpatialSpring() = spring<T>(
+        dampingRatio = Spring.DampingRatioMediumBouncy,
+        stiffness = Spring.StiffnessMedium
+    )
+
+    fun <T> smoothColorSpring() = spring<T>(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessLow
+    )
+}
 
 private val DefaultZenDarkColorScheme = darkColorScheme(
     primary = ZenPrimaryDark,
@@ -95,7 +134,7 @@ private val SleepDarkColorScheme = DefaultZenDarkColorScheme.copy(
 )
 
 /**
- * DynamicTheme: Core Material 3 dynamic color theme wrapper for Material You design standards.
+ * DynamicTheme: Core Material 3 Expressive dynamic color theme wrapper.
  * On Android 12+ (API 31+), it dynamically extracts and applies the user's personal wallpaper
  * palette via dynamicDarkColorScheme and dynamicLightColorScheme.
  */
@@ -150,6 +189,7 @@ fun DynamicTheme(
     MaterialTheme(
         colorScheme = finalColorScheme,
         typography = Typography,
+        shapes = ExpressiveShapes,
         content = content
     )
 }

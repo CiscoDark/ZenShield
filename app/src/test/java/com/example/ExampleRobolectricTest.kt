@@ -449,6 +449,113 @@ class ExampleRobolectricTest {
         assertTrue(updatedStats.totalSilencedNotifications > 0)
         assertTrue(updatedStats.totalDeclinedCalls > 0)
     }
+
+    @Test
+    fun `gaming mode activation triggers non-interactive popup banner state`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        stateManager.setProfile(FocusProfile.GAMING)
+
+        val popup = com.example.ui.GamingModePopupManager.popupState.value
+        assertTrue("Non-interactive Gaming Mode pop-up must be emitted on GAMING activation", popup != null)
+        assertEquals("GAMING MODE ACTIVE", popup?.title)
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `material 3 expressive shapes motion tokens and workspace tabs are configured`() {
+        val expressiveShapes = com.example.ui.theme.ExpressiveShapes
+        assertTrue("ExpressiveShapes must be defined", expressiveShapes.extraLarge != expressiveShapes.extraSmall)
+
+        val bouncySpring = com.example.ui.theme.ExpressiveMotion.bouncySpatialSpring<Float>()
+        assertTrue("Bouncy spring must have positive stiffness", bouncySpring.stiffness > 0f)
+
+        val tabs = SentinalWorkspaceTab.entries
+        assertEquals(4, tabs.size)
+        assertEquals("nav_tab_shield", tabs[0].tag)
+        assertEquals("nav_tab_analytics", tabs[1].tag)
+        assertEquals("nav_tab_rules", tabs[2].tag)
+        assertEquals("nav_tab_system", tabs[3].tag)
+    }
+
+    @Test
+    fun `expressive haptics correlates with focus activation deactivation and notification dismissal`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+
+        // Activating Focus triggers FOCUS_ACTIVATED haptic waveform
+        stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+        assertEquals(
+            com.example.ui.theme.ExpressiveHaptics.HapticPattern.FOCUS_ACTIVATED,
+            com.example.ui.theme.ExpressiveHaptics.lastPlayedPattern.value
+        )
+
+        // Silencing a notification triggers NOTIFICATION_DISMISSED haptic waveform
+        stateManager.incrementShieldedNotification("Slack", "Silenced workspace ping")
+        assertEquals(
+            com.example.ui.theme.ExpressiveHaptics.HapticPattern.NOTIFICATION_DISMISSED,
+            com.example.ui.theme.ExpressiveHaptics.lastPlayedPattern.value
+        )
+
+        // Turning off Focus triggers FOCUS_DEACTIVATED haptic waveform
+        stateManager.setProfile(FocusProfile.OFF)
+        assertEquals(
+            com.example.ui.theme.ExpressiveHaptics.HapticPattern.FOCUS_DEACTIVATED,
+            com.example.ui.theme.ExpressiveHaptics.lastPlayedPattern.value
+        )
+    }
+
+    @Test
+    fun `custom duration slider updates customDurationMinutes and live expiry timestamp`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.WORK, DurationOption.FOR_ONE_HOUR)
+        stateManager.setCustomDurationMinutes(95)
+
+        assertEquals(95, stateManager.state.value.customDurationMinutes)
+        val expiresAt = stateManager.state.value.expiresAtMillis
+        assertTrue("Expiry must be set for custom duration", expiresAt != null)
+        assertTrue(
+            "Expiry should be roughly 95 minutes from now",
+            expiresAt!! > System.currentTimeMillis() + (90 * 60_000L)
+        )
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `live intercepts feed records events and supports single dismiss and clear`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.clearInterceptHistory()
+        assertTrue(stateManager.state.value.recentIntercepts.isEmpty())
+
+        stateManager.incrementShieldedCall("Test Caller", isVoip = false)
+        stateManager.incrementShieldedNotification("Discord", "Silenced ping")
+
+        val intercepts = stateManager.state.value.recentIntercepts
+        assertEquals(2, intercepts.size)
+        assertEquals("Discord", intercepts[0].sourceLabel)
+        assertEquals("Test Caller", intercepts[1].sourceLabel)
+
+        // Dismiss first item
+        val firstId = intercepts[0].id
+        stateManager.dismissInterceptEvent(firstId)
+        assertEquals(1, stateManager.state.value.recentIntercepts.size)
+
+        // Clear all
+        stateManager.clearInterceptHistory()
+        assertTrue(stateManager.state.value.recentIntercepts.isEmpty())
+    }
 }
+
+
 
 

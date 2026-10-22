@@ -18,17 +18,34 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,10 +57,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +72,7 @@ import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -85,12 +105,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -115,11 +134,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -133,15 +154,23 @@ import com.example.core.DurationOption
 import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
+import com.example.core.InterceptEvent
+import com.example.core.InterceptType
 import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
 import com.example.ui.AutoReplyCustomMessageBottomSheet
 import com.example.ui.GameDetectionCard
+import com.example.ui.GamingModeNonInteractiveOverlay
+import com.example.ui.GamingModePopupManager
 import com.example.ui.WeeklyShieldStatsCard
+import com.example.ui.theme.ExpressiveHaptics
+import com.example.ui.theme.ExpressiveMotion
+import com.example.ui.theme.ExpressiveShapes
 import com.example.ui.theme.FocusThemePreferences
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.Typography
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 enum class SentinalWorkspaceTab(
     val label: String,
@@ -196,8 +225,8 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * DynamicTheme: Composable wrapper in MainActivity utilizing the system's current color scheme
- * to support Material You design standards (Android 12+ dynamicLightColorScheme / dynamicDarkColorScheme).
+ * DynamicTheme: Composable wrapper in MainActivity utilizing Material 3 Expressive shapes,
+ * typography, and dynamic wallpaper / profile-reactive color schemes.
  */
 @Composable
 fun DynamicTheme(
@@ -232,6 +261,7 @@ fun DynamicTheme(
         MaterialTheme(
             colorScheme = finalColorScheme,
             typography = Typography,
+            shapes = ExpressiveShapes,
             content = content
         )
     } else {
@@ -265,6 +295,7 @@ fun ZenShieldDashboardScreen(
 
     // Return to Shield Command Center when pressing Back from secondary tabs
     BackHandler(enabled = selectedTabIndex != 0) {
+        ExpressiveHaptics.playSpringTap(context)
         selectedTabIndex = 0
     }
 
@@ -314,187 +345,255 @@ fun ZenShieldDashboardScreen(
             FocusProfile.WORK -> MaterialTheme.colorScheme.tertiaryContainer
             FocusProfile.SLEEP -> MaterialTheme.colorScheme.primaryContainer
         },
-        animationSpec = tween(durationMillis = 400),
+        animationSpec = ExpressiveMotion.smoothColorSpring(),
         label = "header_color"
     )
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(34.dp)
+    val topBadgeCorner by animateDpAsState(
+        targetValue = if (activeProfile != FocusProfile.OFF) 19.dp else 12.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "top_badge_corner"
+    )
+
+    Box(modifier = modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Shield,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                            Surface(
+                                shape = RoundedCornerShape(topBadgeCorner),
+                                color = if (activeProfile != FocusProfile.OFF) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                },
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Shield,
+                                        contentDescription = null,
+                                        tint = if (activeProfile != FocusProfile.OFF) {
+                                            MaterialTheme.colorScheme.onPrimary
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                        modifier = Modifier.size(21.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.app_name),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f)
+                                    ) {
+                                        Text(
+                                            text = "M3 EXPRESSIVE",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = when (selectedTab) {
+                                        SentinalWorkspaceTab.SHIELD -> "Command Center & Focus Profiles"
+                                        SentinalWorkspaceTab.ANALYTICS -> "7-Day Call & Alert Telemetry"
+                                        SentinalWorkspaceTab.RULES -> "Call Bouncer & Auto-Reply Engine"
+                                        SentinalWorkspaceTab.SYSTEM -> "Material You Studio & Permissions"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        Column {
-                            Text(
-                                text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = when (selectedTab) {
-                                    SentinalWorkspaceTab.SHIELD -> "Command Center & Focus Profiles"
-                                    SentinalWorkspaceTab.ANALYTICS -> "7-Day Call & Alert Telemetry"
-                                    SentinalWorkspaceTab.RULES -> "Call Bouncer & Auto-Reply Engine"
-                                    SentinalWorkspaceTab.SYSTEM -> "Material You Studio & Permissions"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .clickable { showWhitelistSheet = true }
-                            .testTag("app_whitelist_quick_action")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    },
+                    actions = {
+                        val whitelistInteraction = remember { MutableInteractionSource() }
+                        val isWhitelistPressed by whitelistInteraction.collectIsPressedAsState()
+                        val whitelistCorner by animateDpAsState(
+                            targetValue = if (isWhitelistPressed) 11.dp else 22.dp,
+                            animationSpec = ExpressiveMotion.snappySpatialSpring(),
+                            label = "whitelist_corner"
+                        )
+                        val whitelistScale by animateFloatAsState(
+                            targetValue = if (isWhitelistPressed) 0.94f else 1f,
+                            animationSpec = ExpressiveMotion.snappySpatialSpring(),
+                            label = "whitelist_scale"
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(whitelistCorner),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(
+                                1.2.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                            ),
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .graphicsLayer {
+                                    scaleX = whitelistScale
+                                    scaleY = whitelistScale
+                                }
+                                .clickable(
+                                    interactionSource = whitelistInteraction,
+                                    indication = null
+                                ) {
+                                    ExpressiveHaptics.playSpringTap(context)
+                                    showWhitelistSheet = true
+                                }
+                                .testTag("app_whitelist_quick_action")
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Apps,
-                                contentDescription = "Open App Whitelist",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Whitelist",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Apps,
+                                    contentDescription = "Open App Whitelist",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Whitelist",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+            },
+            bottomBar = {
+                FloatingExpressivePillToolbar(
+                    selectedTabIndex = selectedTabIndex,
+                    onTabSelected = { newIndex ->
+                        if (newIndex != selectedTabIndex) {
+                            ExpressiveHaptics.playSpringTap(context)
+                            selectedTabIndex = newIndex
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
                 )
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                windowInsets = WindowInsets.navigationBars,
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                tonalElevation = 3.dp
-            ) {
-                SentinalWorkspaceTab.entries.forEachIndexed { index, tab ->
-                    val isSelected = selectedTabIndex == index
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = { selectedTabIndex = index },
-                        icon = {
-                            Icon(
-                                imageVector = tab.icon,
-                                contentDescription = tab.label
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = tab.label,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                            )
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        modifier = Modifier.testTag(tab.tag)
-                    )
-                }
             }
-        }
-    ) { innerPadding ->
-        AnimatedContent(
-            targetState = selectedTab,
-            transitionSpec = {
-                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
-            },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            label = "workspace_tab_transition"
-        ) { currentTab ->
-            when (currentTab) {
-                SentinalWorkspaceTab.SHIELD -> {
-                    ShieldCommandCenterTab(
-                        state = state,
-                        activeProfile = activeProfile,
-                        headerBgColor = animatedHeaderColor,
-                        weeklySilencedTotal = weeklySummary.totalSilencedNotifications,
-                        weeklyCallsTotal = weeklySummary.totalDeclinedCalls,
-                        grantedPermissionsCount = grantedPermissionsCount,
-                        stateManager = stateManager,
-                        onOpenAnalyticsTab = { selectedTabIndex = SentinalWorkspaceTab.ANALYTICS.ordinal },
-                        onOpenRulesTab = { selectedTabIndex = SentinalWorkspaceTab.RULES.ordinal },
-                        onOpenSystemTab = { selectedTabIndex = SentinalWorkspaceTab.SYSTEM.ordinal }
-                    )
-                }
-
-                SentinalWorkspaceTab.ANALYTICS -> {
-                    AnalyticsTelemetryTab(
-                        state = state,
-                        stateManager = stateManager
-                    )
-                }
-
-                SentinalWorkspaceTab.RULES -> {
-                    RulesAndBouncerTab(
-                        state = state,
-                        stateManager = stateManager,
-                        onOpenAutoReplySheet = { showAutoReplySheet = true },
-                        onOpenGamePickerSheet = { showGamePickerSheet = true }
-                    )
-                }
-
-                SentinalWorkspaceTab.SYSTEM -> {
-                    SystemAndThemeTab(
-                        state = state,
-                        stateManager = stateManager,
-                        hasNotificationListener = hasNotificationListener,
-                        hasDndAccess = hasDndAccess,
-                        hasRuntimePermissions = hasRuntimePermissions,
-                        hasBatteryExemption = hasBatteryExemption,
-                        hasUsageStatsAccess = hasUsageStatsAccess,
-                        grantedPermissionsCount = grantedPermissionsCount,
-                        onRequestRuntimePermissions = {
-                            val perms = mutableListOf(Manifest.permission.READ_CONTACTS)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        ) { innerPadding ->
+            // Directional spatial slide + spring-scale workspace transition
+            AnimatedContent(
+                targetState = selectedTab,
+                transitionSpec = {
+                    val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                    (slideInHorizontally(
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring()
+                    ) { fullWidth -> direction * (fullWidth / 5) } +
+                        fadeIn(animationSpec = ExpressiveMotion.smoothColorSpring()) +
+                        scaleIn(initialScale = 0.95f, animationSpec = ExpressiveMotion.bouncySpatialSpring()))
+                        .togetherWith(
+                            slideOutHorizontally(
+                                animationSpec = ExpressiveMotion.snappySpatialSpring()
+                            ) { fullWidth -> -direction * (fullWidth / 6) } +
+                                fadeOut(animationSpec = ExpressiveMotion.smoothColorSpring()) +
+                                scaleOut(targetScale = 0.95f, animationSpec = ExpressiveMotion.snappySpatialSpring())
+                        )
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                label = "workspace_tab_transition"
+            ) { currentTab ->
+                when (currentTab) {
+                    SentinalWorkspaceTab.SHIELD -> {
+                        ShieldCommandCenterTab(
+                            state = state,
+                            activeProfile = activeProfile,
+                            headerBgColor = animatedHeaderColor,
+                            weeklySilencedTotal = weeklySummary.totalSilencedNotifications,
+                            weeklyCallsTotal = weeklySummary.totalDeclinedCalls,
+                            grantedPermissionsCount = grantedPermissionsCount,
+                            stateManager = stateManager,
+                            onOpenAnalyticsTab = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                selectedTabIndex = SentinalWorkspaceTab.ANALYTICS.ordinal
+                            },
+                            onOpenRulesTab = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                selectedTabIndex = SentinalWorkspaceTab.RULES.ordinal
+                            },
+                            onOpenSystemTab = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                selectedTabIndex = SentinalWorkspaceTab.SYSTEM.ordinal
                             }
-                            permissionsLauncher.launch(perms.toTypedArray())
-                        }
-                    )
+                        )
+                    }
+
+                    SentinalWorkspaceTab.ANALYTICS -> {
+                        AnalyticsTelemetryTab(
+                            state = state,
+                            stateManager = stateManager
+                        )
+                    }
+
+                    SentinalWorkspaceTab.RULES -> {
+                        RulesAndBouncerTab(
+                            state = state,
+                            stateManager = stateManager,
+                            onOpenAutoReplySheet = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showAutoReplySheet = true
+                            },
+                            onOpenGamePickerSheet = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showGamePickerSheet = true
+                            }
+                        )
+                    }
+
+                    SentinalWorkspaceTab.SYSTEM -> {
+                        SystemAndThemeTab(
+                            state = state,
+                            stateManager = stateManager,
+                            hasNotificationListener = hasNotificationListener,
+                            hasDndAccess = hasDndAccess,
+                            hasRuntimePermissions = hasRuntimePermissions,
+                            hasBatteryExemption = hasBatteryExemption,
+                            hasUsageStatsAccess = hasUsageStatsAccess,
+                            grantedPermissionsCount = grantedPermissionsCount,
+                            onRequestRuntimePermissions = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                val perms = mutableListOf(Manifest.permission.READ_CONTACTS)
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                permissionsLauncher.launch(perms.toTypedArray())
+                            }
+                        )
+                    }
                 }
             }
         }
+
+        // Non-interactive touch-passthrough Gaming Mode pop-up pill at top of screen
+        GamingModeNonInteractiveOverlay(
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 
     if (showWhitelistSheet) {
@@ -520,6 +619,317 @@ fun ZenShieldDashboardScreen(
     }
 }
 
+/**
+ * RollingTelemetryCounter
+ *
+ * Smooth vertical odometer-style roll animation for live countdown timers and blocked counters.
+ */
+@Composable
+fun RollingTelemetryCounter(
+    valueText: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    AnimatedContent(
+        targetState = valueText,
+        transitionSpec = {
+            (slideInVertically(animationSpec = ExpressiveMotion.bouncySpatialSpring()) { h -> h / 2 } +
+                fadeIn(animationSpec = ExpressiveMotion.smoothColorSpring()))
+                .togetherWith(
+                    slideOutVertically(animationSpec = ExpressiveMotion.snappySpatialSpring()) { h -> -h / 2 } +
+                        fadeOut(animationSpec = ExpressiveMotion.smoothColorSpring())
+                )
+        },
+        modifier = modifier,
+        label = "rolling_telemetry_counter"
+    ) { target ->
+        Text(
+            text = target,
+            style = style,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.ExtraBold,
+            color = color,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * LiveAnimatedShieldEmblem
+ *
+ * Replaces the static raster app icon in the Hero header with a live animated vector shield emblem
+ * featuring a breathing sonar pulse ring and spring-morphing profile icon.
+ */
+@Composable
+fun LiveAnimatedShieldEmblem(
+    activeProfile: FocusProfile,
+    modifier: Modifier = Modifier
+) {
+    val isActive = activeProfile != FocusProfile.OFF
+    val infiniteTransition = rememberInfiniteTransition(label = "shield_sonar_transition")
+    val sonarProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "sonar_ring_progress"
+    )
+    val breathingScale by infiniteTransition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathing_emblem_scale"
+    )
+
+    val emblemCorner by animateDpAsState(
+        targetValue = if (isActive) 28.dp else 18.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "emblem_corner_morph"
+    )
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val containerColor by animateColorAsState(
+        targetValue = if (isActive) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        },
+        animationSpec = ExpressiveMotion.smoothColorSpring(),
+        label = "emblem_bg_color"
+    )
+
+    Box(
+        modifier = modifier
+            .size(62.dp)
+            .testTag("live_animated_shield_emblem"),
+        contentAlignment = Alignment.Center
+    ) {
+        // Breathing Sonar Pulse Rings
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val maxRadius = size.minDimension / 2f
+            val baseAlpha = if (isActive) 0.55f else 0.22f
+            val ringRadius = maxRadius * (0.65f + 0.35f * sonarProgress)
+            val ringAlpha = baseAlpha * (1f - sonarProgress)
+
+            drawCircle(
+                color = primaryColor.copy(alpha = ringAlpha),
+                radius = ringRadius,
+                style = Stroke(width = if (isActive) 2.5.dp.toPx() else 1.5.dp.toPx())
+            )
+            if (isActive) {
+                val innerProgress = (sonarProgress + 0.5f) % 1f
+                drawCircle(
+                    color = Color(0xFF38EF7D).copy(alpha = 0.4f * (1f - innerProgress)),
+                    radius = maxRadius * (0.62f + 0.38f * innerProgress),
+                    style = Stroke(width = 1.8.dp.toPx())
+                )
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(emblemCorner),
+            color = containerColor,
+            border = BorderStroke(
+                width = if (isActive) 2.dp else 1.dp,
+                color = if (isActive) Color(0xFF38EF7D).copy(alpha = 0.7f) else primaryColor.copy(alpha = 0.35f)
+            ),
+            shadowElevation = if (isActive) 8.dp else 2.dp,
+            modifier = Modifier
+                .size(50.dp)
+                .graphicsLayer {
+                    val scale = if (isActive) breathingScale else 1f
+                    scaleX = scale
+                    scaleY = scale
+                }
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                AnimatedContent(
+                    targetState = activeProfile,
+                    transitionSpec = {
+                        (scaleIn(initialScale = 0.6f, animationSpec = ExpressiveMotion.bouncySpatialSpring()) +
+                            fadeIn(animationSpec = ExpressiveMotion.smoothColorSpring()))
+                            .togetherWith(
+                                scaleOut(targetScale = 0.6f, animationSpec = ExpressiveMotion.snappySpatialSpring()) +
+                                    fadeOut(animationSpec = ExpressiveMotion.smoothColorSpring())
+                            )
+                    },
+                    label = "emblem_icon_morph"
+                ) { profile ->
+                    Icon(
+                        imageVector = when (profile) {
+                            FocusProfile.OFF -> Icons.Rounded.Shield
+                            FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
+                            FocusProfile.GAMING -> Icons.Rounded.SportsEsports
+                            FocusProfile.WORK -> Icons.Rounded.Work
+                            FocusProfile.SLEEP -> Icons.Rounded.Bedtime
+                        },
+                        contentDescription = profile.displayName,
+                        tint = if (profile != FocusProfile.OFF) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * FloatingExpressivePillToolbar
+ *
+ * Material 3 Expressive floating capsule navigation bar anchored above WindowInsets.navigationBars.
+ * Active workspace tabs morph their corner radius, scale, and pill width using bouncy spring physics.
+ */
+@Composable
+fun FloatingExpressivePillToolbar(
+    selectedTabIndex: Int,
+    onTabSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+            .testTag("expressive_floating_pill_toolbar"),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f),
+            tonalElevation = 8.dp,
+            shadowElevation = 14.dp,
+            border = BorderStroke(
+                1.2.dp,
+                Brush.horizontalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.42f),
+                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.28f),
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
+                    )
+                )
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SentinalWorkspaceTab.entries.forEachIndexed { index, tab ->
+                    val isSelected = selectedTabIndex == index
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+
+                    val pillCorner by animateDpAsState(
+                        targetValue = when {
+                            isPressed -> 12.dp
+                            isSelected -> 26.dp
+                            else -> 16.dp
+                        },
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "nav_pill_corner_${tab.name}"
+                    )
+                    val itemScale by animateFloatAsState(
+                        targetValue = when {
+                            isPressed -> 0.91f
+                            isSelected -> 1.03f
+                            else -> 0.96f
+                        },
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "nav_pill_scale_${tab.name}"
+                    )
+                    val containerColor by animateColorAsState(
+                        targetValue = if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            Color.Transparent
+                        },
+                        animationSpec = ExpressiveMotion.smoothColorSpring(),
+                        label = "nav_pill_bg_${tab.name}"
+                    )
+                    val contentColor by animateColorAsState(
+                        targetValue = if (isSelected) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        animationSpec = ExpressiveMotion.smoothColorSpring(),
+                        label = "nav_pill_fg_${tab.name}"
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(pillCorner),
+                        color = containerColor,
+                        border = if (isSelected) {
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+                        } else {
+                            null
+                        },
+                        modifier = Modifier
+                            .graphicsLayer {
+                                scaleX = itemScale
+                                scaleY = itemScale
+                            }
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(pillCorner))
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null
+                            ) { onTabSelected(index) }
+                            .testTag(tab.tag)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(
+                                horizontal = if (isSelected) 16.dp else 14.dp,
+                                vertical = 10.dp
+                            ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label,
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else contentColor,
+                                modifier = Modifier.size(21.dp)
+                            )
+
+                            AnimatedVisibility(
+                                visible = isSelected,
+                                enter = expandHorizontally(
+                                    animationSpec = ExpressiveMotion.bouncySpatialSpring()
+                                ) + fadeIn(animationSpec = ExpressiveMotion.smoothColorSpring()),
+                                exit = shrinkHorizontally(
+                                    animationSpec = ExpressiveMotion.snappySpatialSpring()
+                                ) + fadeOut(animationSpec = ExpressiveMotion.smoothColorSpring())
+                            ) {
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = contentColor,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ShieldCommandCenterTab(
     state: FocusSessionState,
@@ -537,19 +947,24 @@ private fun ShieldCommandCenterTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Hero Status Header Card
+        // 1. Hero Status Header Card (with Live Animated Shield Emblem + Custom Duration Slider)
         item {
             HeroStatusHeaderCard(
                 state = state,
                 activeProfile = activeProfile,
                 headerBgColor = headerBgColor,
                 onDurationSelected = { duration ->
+                    ExpressiveHaptics.playSpringTap(context)
                     stateManager.setDuration(duration)
                 },
+                onCustomDurationMinutesChanged = { minutes ->
+                    stateManager.setCustomDurationMinutes(minutes)
+                },
                 onAdjustMinutes = { deltaMinutes ->
+                    ExpressiveHaptics.playSpringTap(context)
                     stateManager.adjustRemainingTime(context, deltaMinutes.toLong())
                 },
                 onToggleFocus = {
@@ -567,9 +982,9 @@ private fun ShieldCommandCenterTab(
         if (grantedPermissionsCount < 5) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(22.dp),
                     color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onOpenSystemTab() }
@@ -619,13 +1034,14 @@ private fun ShieldCommandCenterTab(
                 Text(
                     text = "Focus Mode Matrix",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 if (activeProfile != FocusProfile.OFF) {
                     Surface(
                         shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
                         modifier = Modifier
                             .clickable {
                                 stateManager.resetSessionCaches()
@@ -637,8 +1053,8 @@ private fun ShieldCommandCenterTab(
                             text = "Turn Off Shield",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                         )
                     }
                 }
@@ -653,13 +1069,32 @@ private fun ShieldCommandCenterTab(
             )
         }
 
+        // 3b. Live Notification Shade Controller & Gaming Pop-Up Preview Card
+        item {
+            LiveNotificationHudPreviewCard(
+                state = state,
+                activeProfile = activeProfile,
+                liveCallsDeclined = weeklyCallsTotal,
+                liveAlertsSilenced = weeklySilencedTotal,
+                stateManager = stateManager
+            )
+        }
+
+        // 3c. Live Blocked Activity Feed & One-Tap Shield Intercept Simulator
+        item {
+            LiveInterceptsActivityFeedCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
         // 4. Compact Telemetry Snapshot Banner -> Jumps to Analytics Tab
         item {
             ElevatedCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onOpenAnalyticsTab() },
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.elevatedCardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
@@ -680,9 +1115,9 @@ private fun ShieldCommandCenterTab(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Surface(
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(40.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -707,12 +1142,18 @@ private fun ShieldCommandCenterTab(
                                 )
                             }
                         }
-                        Text(
-                            text = "Open Chart →",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                        ) {
+                            Text(
+                                text = "Open Chart →",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
                     }
 
                     Row(
@@ -744,7 +1185,7 @@ private fun ShieldCommandCenterTab(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onOpenRulesTab() },
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(26.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
@@ -764,7 +1205,7 @@ private fun ShieldCommandCenterTab(
                         Surface(
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier.size(42.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -793,14 +1234,688 @@ private fun ShieldCommandCenterTab(
                             )
                         }
                     }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ) {
+                        Text(
+                            text = "Configure",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * LiveInterceptsActivityFeedCard
+ *
+ * Real-time Live Blocked Activity Feed (Recent Intercepts Log) + One-Tap Shield Intercept Simulator
+ * with spring-correlated haptics on simulation, individual item dismissal, and clear-all.
+ */
+@Composable
+fun LiveInterceptsActivityFeedCard(
+    state: FocusSessionState,
+    stateManager: FocusStateManager,
+    modifier: Modifier = Modifier
+) {
+    val intercepts = state.recentIntercepts
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("live_intercepts_feed_card"),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Shield,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "Live Intercepts Activity Feed",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Real-time log of bounced calls & silenced alerts",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (intercepts.isNotEmpty()) {
+                    TextButton(
+                        onClick = { stateManager.clearInterceptHistory() },
+                        modifier = Modifier.testTag("clear_intercepts_btn")
+                    ) {
+                        Text(
+                            text = "Clear (${intercepts.size})",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
+            // One-Tap Shield Intercept Simulator Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = {
+                        stateManager.incrementShieldedCall(
+                            callerLabel = "WhatsApp Call • Alex R.",
+                            isVoip = true
+                        )
+                    },
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("simulate_call_intercept_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PhoneCallback,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Configure",
+                        text = "Test Call Bounce",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        maxLines = 1
+                    )
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        stateManager.incrementShieldedNotification(
+                            sourceApp = "Chat Ping • Squad",
+                            detail = "Silenced & dismissed without auto-reply"
+                        )
+                    },
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("simulate_alert_intercept_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.NotificationsOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Test Alert Silence",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }
+
+            if (intercepts.isEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "No recent intercepts in feed. Tap 'Test Call Bounce' or 'Test Alert Silence' above to preview real-time shield interception with spring haptics.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(14.dp)
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    intercepts.take(4).forEach { event ->
+                        InterceptEventRow(
+                            event = event,
+                            onDismiss = { stateManager.dismissInterceptEvent(event.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InterceptEventRow(
+    event: InterceptEvent,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isCall = event.type == InterceptType.CALL_DECLINED || event.type == InterceptType.VOIP_CALL_BOUNCED
+    val badgeColor = if (isCall) Color(0xFF00D2FF) else Color(0xFF38EF7D)
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = badgeColor.copy(alpha = 0.16f),
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (isCall) Icons.Rounded.PhoneCallback else Icons.Rounded.NotificationsOff,
+                            contentDescription = null,
+                            tint = badgeColor,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = event.sourceLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = badgeColor.copy(alpha = 0.18f)
+                        ) {
+                            Text(
+                                text = event.type.badgeLabel,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = badgeColor,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "${event.timeLabel} • ${event.detail}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("dismiss_intercept_${event.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Dismiss intercept event",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LiveNotificationHudPreviewCard(
+    state: FocusSessionState,
+    activeProfile: FocusProfile,
+    liveCallsDeclined: Int,
+    liveAlertsSilenced: Int,
+    stateManager: FocusStateManager,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isActive = activeProfile != FocusProfile.OFF
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(isActive, state.expiresAtMillis, state.sessionStartTimeMillis, state.gameExitCountdownSeconds) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            delay(1000L)
+        }
+    }
+
+    val isTimed = isActive && state.expiresAtMillis != null && state.expiresAtMillis > nowMillis
+    val remainingSec = if (isTimed && state.expiresAtMillis != null) {
+        maxOf(0L, (state.expiresAtMillis - nowMillis) / 1000L)
+    } else 0L
+    val elapsedSec = if (isActive) {
+        maxOf(0L, (nowMillis - (state.sessionStartTimeMillis ?: nowMillis)) / 1000L)
+    } else 0L
+
+    val timerLabel = when {
+        !isActive -> "STANDBY"
+        isTimed -> {
+            val h = remainingSec / 3600
+            val m = (remainingSec % 3600) / 60
+            val s = remainingSec % 60
+            if (h > 0) String.format("%02d:%02d:%02d left", h, m, s)
+            else String.format("%02d:%02d left", m, s)
+        }
+        else -> {
+            val h = elapsedSec / 3600
+            val m = (elapsedSec % 3600) / 60
+            val s = elapsedSec % 60
+            if (h > 0) String.format("Elapsed %02d:%02d:%02d", h, m, s)
+            else String.format("Elapsed %02d:%02d", m, s)
+        }
+    }
+
+    val progressFraction = when {
+        !isActive -> 0f
+        state.gameExitCountdownSeconds != null -> (state.gameExitCountdownSeconds / 30f).coerceIn(0.05f, 1f)
+        isTimed && state.expiresAtMillis != null -> {
+            val startMs = state.sessionStartTimeMillis ?: (state.expiresAtMillis - 3600_000L)
+            val totalSpan = maxOf(60_000L, state.expiresAtMillis - startMs).toFloat()
+            val remMs = maxOf(0L, state.expiresAtMillis - nowMillis).toFloat()
+            (remMs / totalSpan).coerceIn(0.05f, 1f)
+        }
+        else -> 1f
+    }
+
+    val modeTitle = when (activeProfile) {
+        FocusProfile.GAMING -> "GAMING FOCUS"
+        FocusProfile.DO_NOT_DISTURB -> "DO NOT DISTURB"
+        FocusProfile.WORK -> "WORK FOCUS"
+        FocusProfile.SLEEP -> "SLEEP SHIELD"
+        FocusProfile.OFF -> "LIVE NOTIFICATION STANDBY"
+    }
+
+    val hudCornerRadius by animateDpAsState(
+        targetValue = if (isActive) 30.dp else 22.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "hud_card_corner"
+    )
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("live_notification_hud_card"),
+        shape = RoundedCornerShape(hudCornerRadius),
+        color = Color(0xFF0D131F),
+        border = BorderStroke(
+            width = if (isActive) 1.5.dp else 1.dp,
+            color = if (isActive) Color(0xFF38EF7D).copy(alpha = 0.55f) else Color(0xFF26344B)
+        ),
+        shadowElevation = if (isActive) 8.dp else 4.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header Row: Mode Title, Live Timer, and Status Badge / Pop-up Tester
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Notifications,
+                        contentDescription = null,
+                        tint = if (isActive) Color(0xFF38EF7D) else Color(0xFF00D2FF),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = modeTitle,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        color = Color(0xFFF8FAFC),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    RollingTelemetryCounter(
+                        valueText = timerLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        color = Color(0xFF00D2FF)
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = if (state.gameExitCountdownSeconds != null) {
+                            Color(0x33FFB300)
+                        } else if (isActive) {
+                            Color(0x2638EF7D)
+                        } else {
+                            Color(0xFF1E293B)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (state.gameExitCountdownSeconds != null) Color(0xFFFFB300)
+                            else if (isActive) Color(0xFF38EF7D)
+                            else Color(0xFF475569)
+                        )
+                    ) {
+                        Text(
+                            text = when {
+                                state.gameExitCountdownSeconds != null -> "EXIT ${state.gameExitCountdownSeconds}s"
+                                isActive -> "LIVE • SHADE"
+                                else -> "PREVIEW"
+                            },
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            color = when {
+                                state.gameExitCountdownSeconds != null -> Color(0xFFFFB300)
+                                isActive -> Color(0xFF38EF7D)
+                                else -> Color(0xFF94A3B8)
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            // Subtitle & Non-Interactive Gaming Pop-Up Trigger
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (state.autoReplyEnabled) {
+                        "Call Auto-Reply ON • Messages Silenced"
+                    } else {
+                        "Silent Call Bouncer • Messages Silenced"
+                    },
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier.weight(1f)
+                )
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF162235),
+                    border = BorderStroke(1.dp, Color(0xFF38EF7D).copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .clickable {
+                            ExpressiveHaptics.playFocusActivated(context)
+                            GamingModePopupManager.showGamingModeActivatedPopup(
+                                context,
+                                "Gaming HUD Test"
+                            )
+                        }
+                        .testTag("btn_test_gaming_popup")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SportsEsports,
+                            contentDescription = null,
+                            tint = Color(0xFF38EF7D),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Test Gaming Pop-Up",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            color = Color(0xFF38EF7D)
+                        )
+                    }
+                }
+            }
+
+            // Live Progress Bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF1C283B))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progressFraction)
+                        .height(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(Color(0xFF00D2FF), Color(0xFF38EF7D))
+                            )
+                        )
+                )
+            }
+
+            // 2-Column Live Telemetry Strip with Rolling Odometer Counters
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF151F30),
+                    border = BorderStroke(1.dp, Color(0xFF26364F)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        RollingTelemetryCounter(
+                            valueText = liveCallsDeclined.toString(),
+                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
+                            color = Color(0xFF00D2FF)
+                        )
+                        Text(
+                            text = "Calls Declined",
+                            fontSize = 11.sp,
+                            color = Color(0xFFCBD5E1),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF151F30),
+                    border = BorderStroke(1.dp, Color(0xFF26364F)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        RollingTelemetryCounter(
+                            valueText = liveAlertsSilenced.toString(),
+                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
+                            color = Color(0xFF38EF7D)
+                        )
+                        Text(
+                            text = "Alerts Silenced",
+                            fontSize = 11.sp,
+                            color = Color(0xFFCBD5E1),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // Clean Single-Row Pill Controls (-15m, +15m, +30m, Mode, Turn Off / Activate)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                LiveHudPillButton(
+                    label = "-15m",
+                    containerColor = Color(0xFF1A2538),
+                    contentColor = Color(0xFFCBD5E1),
+                    onClick = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        if (!isActive) stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+                        stateManager.adjustRemainingTime(context, -15L)
+                    },
+                    modifier = Modifier.weight(0.85f)
+                )
+                LiveHudPillButton(
+                    label = "+15m",
+                    containerColor = Color(0xFF0284C7),
+                    contentColor = Color.White,
+                    onClick = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        if (!isActive) stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+                        stateManager.adjustRemainingTime(context, 15L)
+                    },
+                    modifier = Modifier.weight(0.85f)
+                )
+                LiveHudPillButton(
+                    label = "+30m",
+                    containerColor = Color(0xFF0284C7),
+                    contentColor = Color.White,
+                    onClick = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        if (!isActive) stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+                        stateManager.adjustRemainingTime(context, 30L)
+                    },
+                    modifier = Modifier.weight(0.85f)
+                )
+                LiveHudPillButton(
+                    label = "Mode",
+                    containerColor = Color(0xFF1A2538),
+                    contentColor = Color(0xFFE2E8F0),
+                    onClick = { stateManager.cycleNextActiveProfile(context) },
+                    modifier = Modifier.weight(1.1f)
+                )
+                LiveHudPillButton(
+                    label = if (isActive) "Turn Off" else "Start",
+                    containerColor = if (isActive) Color(0xFF7F1D1D) else Color(0xFF059669),
+                    contentColor = if (isActive) Color(0xFFFFCDD2) else Color.White,
+                    onClick = {
+                        if (isActive) {
+                            stateManager.setProfile(FocusProfile.OFF)
+                        } else {
+                            stateManager.setProfile(FocusProfile.GAMING, state.durationOption)
+                        }
+                    },
+                    modifier = Modifier.weight(1.15f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveHudPillButton(
+    label: String,
+    containerColor: Color,
+    contentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val cornerRadius by animateDpAsState(
+        targetValue = if (isPressed) 18.dp else 11.dp,
+        animationSpec = ExpressiveMotion.snappySpatialSpring(),
+        label = "hud_pill_corner"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = ExpressiveMotion.snappySpatialSpring(),
+        label = "hud_pill_scale"
+    )
+
+    Surface(
+        modifier = modifier
+            .height(34.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(interactionSource = interactionSource, indication = null) { onClick() },
+        shape = RoundedCornerShape(cornerRadius),
+        color = containerColor
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = contentColor,
+                maxLines = 1
+            )
         }
     }
 }
@@ -815,7 +1930,7 @@ private fun QuickStatPill(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
@@ -830,11 +1945,9 @@ private fun QuickStatPill(
                 modifier = Modifier.size(20.dp)
             )
             Column {
-                Text(
-                    text = value,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 18.sp,
+                RollingTelemetryCounter(
+                    valueText = value,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
@@ -854,9 +1967,11 @@ private fun AnalyticsTelemetryTab(
     state: FocusSessionState,
     stateManager: FocusStateManager
 ) {
+    val context = LocalContext.current
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // 1. Primary Recharts-Style Weekly Telemetry Card
@@ -864,11 +1979,19 @@ private fun AnalyticsTelemetryTab(
             WeeklyShieldStatsCard(stateManager = stateManager)
         }
 
-        // 2. Current Session Guard Policy Breakdown
+        // 2. Live Intercepts Activity Feed
+        item {
+            LiveInterceptsActivityFeedCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 3. Current Session Guard Policy Breakdown
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
@@ -913,7 +2036,10 @@ private fun AnalyticsTelemetryTab(
                             color = MaterialTheme.colorScheme.primary
                         )
                         TextButton(
-                            onClick = { stateManager.resetSessionCaches() }
+                            onClick = {
+                                ExpressiveHaptics.playNotificationDismissed(context)
+                                stateManager.resetSessionCaches()
+                            }
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Refresh,
@@ -937,9 +2063,11 @@ private fun RulesAndBouncerTab(
     onOpenAutoReplySheet: () -> Unit,
     onOpenGamePickerSheet: () -> Unit
 ) {
+    val context = LocalContext.current
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // 1. Call Auto-Reply Customization Card
@@ -972,7 +2100,10 @@ private fun RulesAndBouncerTab(
                     title = "Decline All Calls Regardless of Condition",
                     subtitle = "Zero-tolerance lockdown: automatically drops all incoming cellular and VoIP calls, ignoring starred contacts and repeat callers",
                     checked = state.declineAllCallsRegardless,
-                    onCheckedChange = { stateManager.setDeclineAllCallsRegardless(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setDeclineAllCallsRegardless(it)
+                    },
                     testTag = "switch_decline_all_calls_regardless"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -980,7 +2111,10 @@ private fun RulesAndBouncerTab(
                     title = "Network-Level Call Rejection (Instant User Busy)",
                     subtitle = "Sends immediate busy signal to tower without ringing",
                     checked = state.networkLevelCallRejection,
-                    onCheckedChange = { stateManager.setNetworkLevelCallRejectionEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setNetworkLevelCallRejectionEnabled(it)
+                    },
                     testTag = "switch_network_rejection"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -988,7 +2122,10 @@ private fun RulesAndBouncerTab(
                     title = "Auto-Decline WhatsApp/Telegram Calls",
                     subtitle = "Hangs up third-party VoIP calls via programmatic action intent",
                     checked = state.autoDeclineVoipCalls,
-                    onCheckedChange = { stateManager.setAutoDeclineVoipCallsEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setAutoDeclineVoipCallsEnabled(it)
+                    },
                     testTag = "switch_voip_bouncer"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -996,7 +2133,10 @@ private fun RulesAndBouncerTab(
                     title = "3-Minute Repeat Caller Breakthrough",
                     subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Second call within 180s rings out loud for real emergencies",
                     checked = state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
-                    onCheckedChange = { stateManager.setAllowRepeatCallersEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setAllowRepeatCallersEnabled(it)
+                    },
                     testTag = "switch_repeat_breakthrough"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1005,6 +2145,7 @@ private fun RulesAndBouncerTab(
                     subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Passes priority contacts through cellular & VoIP filters",
                     checked = state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
                     onCheckedChange = { checked ->
+                        ExpressiveHaptics.playSpringTap(context)
                         stateManager.updateProfileSettings(checked, state.blockRepeatedCallers, state.silenceNotifications)
                     },
                     testTag = "switch_allow_starred"
@@ -1024,7 +2165,10 @@ private fun RulesAndBouncerTab(
                     title = "Auto-Activate Game Mode DND on Game Launch",
                     subtitle = "Automatically transitions to Gaming DND whenever any game launches, and restores previous profile 30s after exit",
                     checked = state.autoGameDetectionEnabled,
-                    onCheckedChange = { stateManager.setAutoGameDetectionEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setAutoGameDetectionEnabled(it)
+                    },
                     testTag = "switch_auto_activate_game_dnd"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1032,7 +2176,10 @@ private fun RulesAndBouncerTab(
                     title = "Auto-Decline WhatsApp & VoIP Calls in Game",
                     subtitle = "Immediately drops VoIP calls in background during gaming",
                     checked = state.autoDeclineVoipInGame,
-                    onCheckedChange = { stateManager.setAutoDeclineVoipInGameEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setAutoDeclineVoipInGameEnabled(it)
+                    },
                     testTag = "switch_gaming_voip"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1040,7 +2187,10 @@ private fun RulesAndBouncerTab(
                     title = "Block Cellular Calls (Including Starred)",
                     subtitle = "Overrides priority contacts so you are never kicked out of match",
                     checked = state.strictGamingLockdownEnabled,
-                    onCheckedChange = { stateManager.setStrictGamingLockdownEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setStrictGamingLockdownEnabled(it)
+                    },
                     testTag = "switch_gaming_lockdown"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1048,7 +2198,10 @@ private fun RulesAndBouncerTab(
                     title = "Suppress All Heads-Up Banners",
                     subtitle = "Blocks intrusive overlay banners while gaming",
                     checked = state.suppressHeadsUpBanners,
-                    onCheckedChange = { stateManager.setSuppressHeadsUpBannersEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setSuppressHeadsUpBannersEnabled(it)
+                    },
                     testTag = "switch_gaming_heads_up"
                 )
             }
@@ -1066,7 +2219,10 @@ private fun RulesAndBouncerTab(
                     title = "OTP, Ride & 'URGENT' Keyword Breakthrough",
                     subtitle = "Allows 2FA codes, delivery drivers, and emergency text alerts while keeping regular messages silent",
                     checked = state.smartUrgentBreakthroughEnabled,
-                    onCheckedChange = { stateManager.setSmartUrgentBreakthroughEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setSmartUrgentBreakthroughEnabled(it)
+                    },
                     testTag = "switch_smart_urgent"
                 )
             }
@@ -1087,13 +2243,14 @@ private fun SystemAndThemeTab(
     onRequestRuntimePermissions: () -> Unit
 ) {
     val context = LocalContext.current
+    val allPermissionsVerified = grantedPermissionsCount >= 5
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Material You Theme & Adaptive Icon Studio
+        // 1. Material You Theme Studio (Interactive App Icon removed for clean Expressive layout)
         item {
             ExpandableConfigCard(
                 title = "Appearance & Material You Theme",
@@ -1106,6 +2263,7 @@ private fun SystemAndThemeTab(
                     subtitle = "Extracts colors directly from your Android 12+ wallpaper palette",
                     checked = state.themePreferences.followSystemWallpaper,
                     onCheckedChange = { checked ->
+                        ExpressiveHaptics.playSpringTap(context)
                         stateManager.updateThemePreferences(state.themePreferences.copy(followSystemWallpaper = checked))
                     },
                     testTag = "switch_theme_dynamic"
@@ -1116,6 +2274,7 @@ private fun SystemAndThemeTab(
                     subtitle = "Shifts primary accent color to match active Focus mode",
                     checked = state.themePreferences.profileTintedAccent,
                     onCheckedChange = { checked ->
+                        ExpressiveHaptics.playSpringTap(context)
                         stateManager.updateThemePreferences(state.themePreferences.copy(profileTintedAccent = checked))
                     },
                     testTag = "switch_theme_profile_tint"
@@ -1126,6 +2285,7 @@ private fun SystemAndThemeTab(
                     subtitle = "Pure black backgrounds for maximum battery savings on OLED",
                     checked = state.themePreferences.amoledPureBlack,
                     onCheckedChange = { checked ->
+                        ExpressiveHaptics.playSpringTap(context)
                         stateManager.updateThemePreferences(state.themePreferences.copy(amoledPureBlack = checked))
                     },
                     testTag = "switch_theme_amoled"
@@ -1135,21 +2295,27 @@ private fun SystemAndThemeTab(
                     title = "Dim Lock Screen During Sleep/DND",
                     subtitle = "Generates minimalist dark slate status wallpaper on lock screen",
                     checked = state.dimLockScreenEnabled,
-                    onCheckedChange = { stateManager.setDimLockScreenEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setDimLockScreenEnabled(it)
+                    },
                     testTag = "switch_dim_lock_screen"
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                InteractiveAppIconPreviewRow()
             }
         }
 
-        // 2. System Permissions Checklist Card
+        // 2. Auto-Collapsing System Permissions Checklist Card
         item {
             ExpandableConfigCard(
                 title = "System Permissions Checklist ($grantedPermissionsCount/5)",
-                subtitle = "Interactive checklist for hardware and Android services",
+                subtitle = if (allPermissionsVerified) {
+                    "All 5 system guards verified • Tap to expand diagnostics"
+                } else {
+                    "Interactive checklist for hardware and Android services"
+                },
                 icon = Icons.Rounded.Security,
-                initiallyExpanded = true
+                initiallyExpanded = !allPermissionsVerified,
+                badgeText = if (allPermissionsVerified) "5/5 VERIFIED" else "$grantedPermissionsCount/5 ACTIVE"
             ) {
                 PermissionStatusRow(
                     title = "Notification Listener Access",
@@ -1157,6 +2323,7 @@ private fun SystemAndThemeTab(
                     isGranted = hasNotificationListener,
                     actionLabel = "Enable",
                     onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
                         runCatching {
                             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         }
@@ -1169,6 +2336,7 @@ private fun SystemAndThemeTab(
                     isGranted = hasDndAccess,
                     actionLabel = "Grant",
                     onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
                         runCatching {
                             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
                         }
@@ -1189,6 +2357,7 @@ private fun SystemAndThemeTab(
                     isGranted = hasBatteryExemption,
                     actionLabel = "Exempt",
                     onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                             runCatching {
                                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -1210,6 +2379,7 @@ private fun SystemAndThemeTab(
                     isGranted = hasUsageStatsAccess,
                     actionLabel = "Grant",
                     onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
                         runCatching {
                             context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -1228,10 +2398,12 @@ fun HeroStatusHeaderCard(
     activeProfile: FocusProfile = state.activeProfile,
     headerBgColor: Color,
     onDurationSelected: (DurationOption) -> Unit,
+    onCustomDurationMinutesChanged: (Int) -> Unit = {},
     onAdjustMinutes: (Int) -> Unit = {},
     onToggleFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val isActive = activeProfile != FocusProfile.OFF
 
     var remainingSeconds by remember(state.expiresAtMillis, isActive) {
@@ -1253,13 +2425,51 @@ fun HeroStatusHeaderCard(
         }
     }
 
+    val toggleInteraction = remember { MutableInteractionSource() }
+    val isTogglePressed by toggleInteraction.collectIsPressedAsState()
+
+    // Material 3 Expressive Shape Morphing for the Hero Card and Action Button
+    val heroCardCorner by animateDpAsState(
+        targetValue = if (isActive) 38.dp else 28.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "hero_card_corner"
+    )
+    val actionBtnCorner by animateDpAsState(
+        targetValue = when {
+            isTogglePressed -> 14.dp
+            isActive -> 28.dp
+            else -> 18.dp
+        },
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "hero_action_btn_corner"
+    )
+    val actionBtnScale by animateFloatAsState(
+        targetValue = if (isTogglePressed) 0.95f else 1f,
+        animationSpec = ExpressiveMotion.snappySpatialSpring(),
+        label = "hero_action_btn_scale"
+    )
+    val borderGlowColor by animateColorAsState(
+        targetValue = if (isActive) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        },
+        animationSpec = ExpressiveMotion.smoothColorSpring(),
+        label = "hero_border_glow"
+    )
+
     ElevatedCard(
         modifier = modifier
             .fillMaxWidth()
+            .border(
+                width = if (isActive) 1.8.dp else 1.dp,
+                color = borderGlowColor,
+                shape = RoundedCornerShape(heroCardCorner)
+            )
             .testTag("hero_status_header_card"),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(heroCardCorner),
         colors = CardDefaults.elevatedCardColors(containerColor = headerBgColor),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (isActive) 8.dp else 4.dp)
     ) {
         Box(
             modifier = Modifier
@@ -1267,10 +2477,11 @@ fun HeroStatusHeaderCard(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = if (isActive) 0.16f else 0.06f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = if (isActive) 0.22f else 0.08f),
+                            MaterialTheme.colorScheme.tertiary.copy(alpha = if (isActive) 0.10f else 0.02f),
                             Color.Transparent
                         ),
-                        radius = 650f
+                        radius = 720f
                     )
                 )
         ) {
@@ -1280,7 +2491,7 @@ fun HeroStatusHeaderCard(
                     .padding(22.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Profile & Glowing Status Badge
+                // Profile & Live Animated Shield Emblem + Glowing Status Badge
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1291,51 +2502,14 @@ fun HeroStatusHeaderCard(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = Color.Transparent,
-                            modifier = Modifier.size(54.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                if (activeProfile == FocusProfile.OFF) {
-                                    Image(
-                                        painter = painterResource(
-                                            if (isSystemInDarkTheme()) R.drawable.sentinal_icon_dark else R.drawable.sentinal_icon_light
-                                        ),
-                                        contentDescription = "Sentinal App Icon",
-                                        modifier = Modifier
-                                            .size(54.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                    )
-                                } else {
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(54.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = when (activeProfile) {
-                                                    FocusProfile.OFF -> Icons.Rounded.Shield
-                                                    FocusProfile.DO_NOT_DISTURB -> Icons.Rounded.DoNotDisturbOn
-                                                    FocusProfile.GAMING -> Icons.Rounded.SportsEsports
-                                                    FocusProfile.WORK -> Icons.Rounded.Work
-                                                    FocusProfile.SLEEP -> Icons.Rounded.Bedtime
-                                                },
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(28.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        LiveAnimatedShieldEmblem(
+                            activeProfile = activeProfile
+                        )
 
                         Column {
                             Text(
                                 text = if (isActive) activeProfile.displayName else "Shield Standby",
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -1358,7 +2532,7 @@ fun HeroStatusHeaderCard(
                         modifier = Modifier.padding(start = 6.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -1381,15 +2555,29 @@ fun HeroStatusHeaderCard(
 
                 // Live Countdown + Quick -15m / +15m Adjusters when Active
                 if (isActive) {
+                    val countdownText = if (state.expiresAtMillis != null) {
+                        val hours = remainingSeconds / 3600
+                        val minutes = (remainingSeconds % 3600) / 60
+                        val seconds = remainingSeconds % 60
+                        if (hours > 0) {
+                            String.format("%02d:%02d:%02d", hours, minutes, seconds)
+                        } else {
+                            String.format("%02d:%02d", minutes, seconds)
+                        }
+                    } else {
+                        "UNTIL TURNED OFF"
+                    }
+
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(22.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -1403,22 +2591,9 @@ fun HeroStatusHeaderCard(
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
-                                Text(
-                                    text = if (state.expiresAtMillis != null) {
-                                        val hours = remainingSeconds / 3600
-                                        val minutes = (remainingSeconds % 3600) / 60
-                                        val seconds = remainingSeconds % 60
-                                        if (hours > 0) {
-                                            String.format("%02d:%02d:%02d", hours, minutes, seconds)
-                                        } else {
-                                            String.format("%02d:%02d", minutes, seconds)
-                                        }
-                                    } else {
-                                        "UNTIL TURNED OFF"
-                                    },
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.ExtraBold,
+                                RollingTelemetryCounter(
+                                    valueText = countdownText,
+                                    style = MaterialTheme.typography.titleLarge,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
@@ -1428,14 +2603,14 @@ fun HeroStatusHeaderCard(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = CircleShape,
                                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                     modifier = Modifier
                                         .clickable { onAdjustMinutes(-15) }
                                         .testTag("btn_timer_minus_15")
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
@@ -1452,26 +2627,28 @@ fun HeroStatusHeaderCard(
                                     }
                                 }
                                 Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
                                     modifier = Modifier
                                         .clickable { onAdjustMinutes(15) }
                                         .testTag("btn_timer_plus_15")
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Add,
                                             contentDescription = "Add 15 minutes",
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Text(
                                             text = "15m",
                                             fontFamily = JetBrainsMonoFontFamily,
                                             style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
                                     }
                                 }
@@ -1480,7 +2657,76 @@ fun HeroStatusHeaderCard(
                     }
                 }
 
-                // Quick Duration Pills: 1h, 2h, Until Turned Off
+                // Interactive Expressive Custom Duration Slider (5m to 8h)
+                var lastDetentBucket by remember { mutableIntStateOf(state.customDurationMinutes / 15) }
+                val customHours = state.customDurationMinutes / 60
+                val customRemMins = state.customDurationMinutes % 60
+                val customDurationLabel = if (customHours > 0) {
+                    String.format("%dh %02dm", customHours, customRemMins)
+                } else {
+                    "${customRemMins}m"
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Custom Shield Timer (5m – 8h)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = customDurationLabel,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Slider(
+                            value = state.customDurationMinutes.toFloat(),
+                            onValueChange = { raw ->
+                                val stepped = ((raw / 5f).roundToInt() * 5).coerceIn(5, 480)
+                                val bucket = stepped / 15
+                                if (bucket != lastDetentBucket) {
+                                    lastDetentBucket = bucket
+                                    ExpressiveHaptics.playSpringTap(context)
+                                }
+                                onCustomDurationMinutesChanged(stepped)
+                            },
+                            valueRange = 5f..480f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("custom_duration_slider")
+                        )
+                    }
+                }
+
+                // Quick Duration Pills: 1h, 2h, Until Turned Off (with M3 Expressive shape morphing)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1491,6 +2737,11 @@ fun HeroStatusHeaderCard(
                         DurationOption.UNTIL_TURNED_OFF to "Until Turned Off"
                     ).forEach { (opt, label) ->
                         val isSelected = state.durationOption == opt
+                        val chipCorner by animateDpAsState(
+                            targetValue = if (isSelected) 24.dp else 12.dp,
+                            animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                            label = "duration_chip_corner_$label"
+                        )
                         FilterChip(
                             selected = isSelected,
                             onClick = { onDurationSelected(opt) },
@@ -1498,10 +2749,10 @@ fun HeroStatusHeaderCard(
                                 Text(
                                     text = label,
                                     style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
                                 )
                             },
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(chipCorner),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primary,
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimary
@@ -1511,14 +2762,19 @@ fun HeroStatusHeaderCard(
                     }
                 }
 
-                // Primary Action Button
+                // Primary Action Button (Morphs corner radius & compresses scale on press)
                 Button(
                     onClick = onToggleFocus,
+                    interactionSource = toggleInteraction,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
+                        .height(52.dp)
+                        .graphicsLayer {
+                            scaleX = actionBtnScale
+                            scaleY = actionBtnScale
+                        }
                         .testTag("hero_toggle_button"),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(actionBtnCorner),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         contentColor = if (isActive) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
@@ -1527,7 +2783,7 @@ fun HeroStatusHeaderCard(
                     Text(
                         text = if (isActive) "Deactivate Sentinal Shield" else "Activate Focus Shield",
                         style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
             }
@@ -1535,6 +2791,13 @@ fun HeroStatusHeaderCard(
     }
 }
 
+/**
+ * FocusProfileBentoGrid
+ *
+ * Material 3 Expressive 2x2 Bento Grid where pressing and selecting a Focus Profile dynamically
+ * morphs the tile's corner radius, compresses/rebounds scale with bouncy springs, and fires
+ * spring-correlated haptics.
+ */
 @Composable
 fun FocusProfileBentoGrid(
     activeProfile: FocusProfile,
@@ -1550,24 +2813,76 @@ fun FocusProfileBentoGrid(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         profiles.chunked(2).forEach { rowItems ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 rowItems.forEach { (profile, icon, summary) ->
                     val isSelected = activeProfile == profile
                     val testTag = "profile_chip_${profile.id.lowercase()}"
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+
+                    val tileCorner by animateDpAsState(
+                        targetValue = when {
+                            isPressed -> 14.dp
+                            isSelected -> 34.dp
+                            else -> 22.dp
+                        },
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "bento_corner_${profile.id}"
+                    )
+                    val iconCorner by animateDpAsState(
+                        targetValue = when {
+                            isPressed -> 10.dp
+                            isSelected -> 20.dp
+                            else -> 13.dp
+                        },
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "bento_icon_corner_${profile.id}"
+                    )
+                    val tileScale by animateFloatAsState(
+                        targetValue = when {
+                            isPressed -> 0.94f
+                            isSelected -> 1.02f
+                            else -> 1.0f
+                        },
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "bento_scale_${profile.id}"
+                    )
+                    val tileBgColor by animateColorAsState(
+                        targetValue = if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        animationSpec = ExpressiveMotion.smoothColorSpring(),
+                        label = "bento_bg_${profile.id}"
+                    )
 
                     Surface(
-                        shape = RoundedCornerShape(22.dp),
-                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                        shape = RoundedCornerShape(tileCorner),
+                        color = tileBgColor,
+                        border = if (isSelected) {
+                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                        } else {
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        },
+                        shadowElevation = if (isSelected) 6.dp else 0.dp,
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { onProfileSelected(profile) }
+                            .graphicsLayer {
+                                scaleX = tileScale
+                                scaleY = tileScale
+                            }
+                            .clip(RoundedCornerShape(tileCorner))
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null
+                            ) { onProfileSelected(profile) }
                             .testTag(testTag)
                     ) {
                         Column(
@@ -1580,16 +2895,16 @@ fun FocusProfileBentoGrid(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
-                                    shape = CircleShape,
+                                    shape = RoundedCornerShape(iconCorner),
                                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.size(38.dp)
+                                    modifier = Modifier.size(40.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = icon,
                                             contentDescription = null,
                                             tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(21.dp)
                                         )
                                     }
                                 }
@@ -1597,7 +2912,8 @@ fun FocusProfileBentoGrid(
                                 if (isSelected) {
                                     Surface(
                                         shape = CircleShape,
-                                        color = Color(0xFF38EF7D).copy(alpha = 0.2f)
+                                        color = Color(0xFF38EF7D).copy(alpha = 0.22f),
+                                        border = BorderStroke(1.dp, Color(0xFF38EF7D).copy(alpha = 0.6f))
                                     ) {
                                         Text(
                                             text = "ON",
@@ -1605,7 +2921,7 @@ fun FocusProfileBentoGrid(
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF38EF7D),
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
                                         )
                                     }
                                 }
@@ -1614,13 +2930,13 @@ fun FocusProfileBentoGrid(
                             Text(
                                 text = profile.displayName,
                                 style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.ExtraBold,
                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = summary,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1639,11 +2955,18 @@ fun VoipAutoReplyCustomizationCard(
     onOpenCustomizeSheet: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val cardCorner by animateDpAsState(
+        targetValue = if (state.autoReplyEnabled) 30.dp else 22.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "voip_card_corner"
+    )
+
     ElevatedCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag("voip_auto_reply_card"),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(cardCorner),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
@@ -1668,7 +2991,7 @@ fun VoipAutoReplyCustomizationCard(
                         .padding(end = 8.dp)
                 ) {
                     Surface(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(if (state.autoReplyEnabled) 21.dp else 14.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier.size(42.dp)
                     ) {
@@ -1699,7 +3022,10 @@ fun VoipAutoReplyCustomizationCard(
 
                 Switch(
                     checked = state.autoReplyEnabled,
-                    onCheckedChange = { stateManager.setAutoReplyEnabled(it) },
+                    onCheckedChange = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.setAutoReplyEnabled(it)
+                    },
                     modifier = Modifier.testTag("voip_auto_reply_switch")
                 )
             }
@@ -1725,7 +3051,7 @@ fun VoipAutoReplyCustomizationCard(
 
                         FilledTonalButton(
                             onClick = onOpenCustomizeSheet,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = CircleShape,
                             modifier = Modifier.testTag("btn_customize_auto_reply_sheet")
                         ) {
                             Icon(
@@ -1750,7 +3076,7 @@ fun VoipAutoReplyCustomizationCard(
                             .testTag("voip_auto_reply_textfield"),
                         minLines = 2,
                         maxLines = 4,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(18.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surface,
                             unfocusedContainerColor = MaterialTheme.colorScheme.surface
@@ -1779,7 +3105,10 @@ fun VoipAutoReplyCustomizationCard(
                         )
 
                         TextButton(
-                            onClick = { stateManager.resetSessionCaches() },
+                            onClick = {
+                                ExpressiveHaptics.playNotificationDismissed(context)
+                                stateManager.resetSessionCaches()
+                            },
                             modifier = Modifier.testTag("btn_reset_auto_reply_cooldowns")
                         ) {
                             Icon(
@@ -1801,148 +3130,41 @@ fun VoipAutoReplyCustomizationCard(
 }
 
 @Composable
-fun InteractiveAppIconPreviewRow(
-    modifier: Modifier = Modifier
-) {
-    val isSystemDark = isSystemInDarkTheme()
-    var previewModeIsDark by remember { mutableStateOf(isSystemDark) }
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Interactive App Icon",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = if (previewModeIsDark) "Dark Mode • Cyan Crescent Moon" else "Light Mode • Amber Sun-Moon",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                modifier = Modifier
-                    .testTag("toggle_icon_preview_btn")
-                    .clickable { previewModeIsDark = !previewModeIsDark }
-            ) {
-                Text(
-                    text = if (previewModeIsDark) "Switch to Light" else "Switch to Dark",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { previewModeIsDark = false }
-                    .padding(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .border(
-                            width = if (!previewModeIsDark) 2.5.dp else 1.dp,
-                            color = if (!previewModeIsDark) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(18.dp)
-                        )
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.sentinal_icon_light),
-                        contentDescription = "Sentinal Light Mode Icon (Gold Sun-Moon)",
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                Text(
-                    text = "Light Mode",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (!previewModeIsDark) FontWeight.Bold else FontWeight.Normal,
-                    color = if (!previewModeIsDark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { previewModeIsDark = true }
-                    .padding(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .border(
-                            width = if (previewModeIsDark) 2.5.dp else 1.dp,
-                            color = if (previewModeIsDark) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(18.dp)
-                        )
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.sentinal_icon_dark),
-                        contentDescription = "Sentinal Dark Mode Icon (Cyan Crescent Moon)",
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                Text(
-                    text = "Dark Mode",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (previewModeIsDark) FontWeight.Bold else FontWeight.Normal,
-                    color = if (previewModeIsDark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun ExpandableConfigCard(
     title: String,
     subtitle: String,
     icon: ImageVector,
     initiallyExpanded: Boolean,
+    badgeText: String? = null,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    val context = LocalContext.current
+    var expanded by remember(initiallyExpanded) { mutableStateOf(initiallyExpanded) }
+    val cardCorner by animateDpAsState(
+        targetValue = if (expanded) 28.dp else 20.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "expandable_card_corner"
+    )
+    val iconCorner by animateDpAsState(
+        targetValue = if (expanded) 21.dp else 13.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "expandable_icon_corner"
+    )
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(cardCorner),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded },
+                    .clickable {
+                        ExpressiveHaptics.playSpringTap(context)
+                        expanded = !expanded
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -1952,7 +3174,7 @@ fun ExpandableConfigCard(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Surface(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(iconCorner),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         modifier = Modifier.size(42.dp)
                     ) {
@@ -1967,12 +3189,33 @@ fun ExpandableConfigCard(
                     }
 
                     Column {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (badgeText != null) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF38EF7D).copy(alpha = 0.18f),
+                                    border = BorderStroke(1.dp, Color(0xFF38EF7D).copy(alpha = 0.5f))
+                                ) {
+                                    Text(
+                                        text = badgeText,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38EF7D),
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
                         Text(
                             text = subtitle,
                             style = MaterialTheme.typography.bodySmall,
@@ -1981,7 +3224,12 @@ fun ExpandableConfigCard(
                     }
                 }
 
-                IconButton(onClick = { expanded = !expanded }) {
+                IconButton(
+                    onClick = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        expanded = !expanded
+                    }
+                ) {
                     Icon(
                         imageVector = if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                         contentDescription = if (expanded) "Collapse" else "Expand"
@@ -1991,8 +3239,8 @@ fun ExpandableConfigCard(
 
             AnimatedVisibility(
                 visible = expanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
+                enter = expandVertically(animationSpec = ExpressiveMotion.bouncySpatialSpring()) + fadeIn(),
+                exit = shrinkVertically(animationSpec = ExpressiveMotion.snappySpatialSpring()) + fadeOut()
             ) {
                 Column(
                     modifier = Modifier.padding(top = 14.dp),
@@ -2100,7 +3348,7 @@ fun PermissionStatusRow(
         } else {
             Button(
                 onClick = onAction,
-                shape = RoundedCornerShape(12.dp),
+                shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary

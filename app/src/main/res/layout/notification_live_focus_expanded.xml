@@ -2,13 +2,14 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@drawable/notification_hud_card_bg"
     android:orientation="vertical"
     android:paddingStart="14dp"
     android:paddingTop="12dp"
     android:paddingEnd="14dp"
     android:paddingBottom="12dp">
 
-    <!-- Header Row: Icon, Mode Title, and Active Status Chip -->
+    <!-- Header Row: Icon, Mode Title, Live Chronometer, and Status Pill -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -17,11 +18,12 @@
 
         <ImageView
             android:id="@+id/iv_expanded_icon"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:layout_marginEnd="8dp"
             android:contentDescription="@string/app_name"
-            android:src="@drawable/ic_launcher_monochrome" />
+            android:src="@drawable/ic_launcher_monochrome"
+            android:tint="#38EF7D" />
 
         <TextView
             android:id="@+id/tv_expanded_title"
@@ -30,10 +32,32 @@
             android:layout_weight="1"
             android:ellipsize="end"
             android:maxLines="1"
-            android:text="🛡️ Gaming Mode Active"
-            android:textColor="#FFFFFF"
-            android:textSize="15sp"
+            android:text="GAMING FOCUS"
+            android:textColor="#F8FAFC"
+            android:textSize="14sp"
             android:textStyle="bold" />
+
+        <Chronometer
+            android:id="@+id/chrono_expanded"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:fontFamily="monospace"
+            android:textColor="#00D2FF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:visibility="visible" />
+
+        <TextView
+            android:id="@+id/tv_expanded_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:fontFamily="monospace"
+            android:textColor="#00D2FF"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/tv_expanded_status"
@@ -44,53 +68,112 @@
             android:paddingTop="2dp"
             android:paddingEnd="8dp"
             android:paddingBottom="2dp"
-            android:text="ACTIVE"
-            android:textColor="#81C784"
+            android:text="LIVE • ACTIVE"
+            android:textColor="#38EF7D"
             android:textSize="10sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Subtitle and Live Countdown Row -->
+    <!-- Subtitle Row -->
+    <TextView
+        android:id="@+id/tv_expanded_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Call Auto-Reply ON • Messaging Silenced"
+        android:textColor="#94A3B8"
+        android:textSize="11sp" />
+
+    <!-- Live Progress Bar -->
+    <ProgressBar
+        android:id="@+id/pb_expanded_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="5dp"
+        android:layout_marginTop="8dp"
+        android:max="100"
+        android:progress="100"
+        android:progressDrawable="@drawable/notification_live_progress" />
+
+    <!-- Live Blocked Telemetry Strip (2 Columns: Declined Calls & Silenced Alerts) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:gravity="center_vertical"
+        android:layout_marginTop="10dp"
         android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/tv_expanded_subtitle"
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="5dp"
             android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="Auto-bouncing calls &amp; filtering alerts"
-            android:textColor="#B0BEC5"
-            android:textSize="12sp" />
+            android:background="@drawable/notification_telemetry_box_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="6dp">
 
-        <Chronometer
-            android:id="@+id/chrono_expanded"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:textColor="#80D8FF"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            <TextView
+                android:id="@+id/tv_live_calls_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="monospace"
+                android:text="0"
+                android:textColor="#00D2FF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/tv_expanded_duration"
-            android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Calls Declined"
+                android:textColor="#CBD5E1"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:textColor="#90CAF9"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+            android:layout_marginStart="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/notification_telemetry_box_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/tv_live_alerts_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="monospace"
+                android:text="0"
+                android:textColor="#38EF7D"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Alerts Silenced"
+                android:textColor="#CBD5E1"
+                android:textSize="11sp" />
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- Action Row 1: Mode Cycle & Stop Focus -->
+    <!-- Single-Row Clean Pill Controls: -15m | +15m | +30m | Mode | Turn Off -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -98,94 +181,86 @@
         android:orientation="horizontal">
 
         <Button
-            android:id="@+id/btn_cycle_mode"
-            style="@android:style/Widget.DeviceDefault.Button.Borderless"
-            android:layout_width="0dp"
-            android:layout_height="36dp"
-            android:layout_marginEnd="6dp"
-            android:layout_weight="1"
-            android:background="@drawable/notification_button_bg"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:text="🔄 Swap Mode"
-            android:textColor="#E0E0E0"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/btn_stop_focus"
-            style="@android:style/Widget.DeviceDefault.Button.Borderless"
-            android:layout_width="0dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:background="@drawable/notification_button_danger_bg"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:text="🛑 Turn Off"
-            android:textColor="#FFCDD2"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <!-- Action Row 2: Timer Fine-Tuning (-15m, +15m, +30m) -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal">
-
-        <Button
             android:id="@+id/btn_sub_15"
             style="@android:style/Widget.DeviceDefault.Button.Borderless"
             android:layout_width="0dp"
-            android:layout_height="34dp"
+            android:layout_height="32dp"
             android:layout_marginEnd="4dp"
-            android:layout_weight="1"
+            android:layout_weight="0.85"
             android:background="@drawable/notification_button_bg"
             android:minWidth="0dp"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp"
+            android:padding="0dp"
             android:text="-15m"
-            android:textColor="#B0BEC5"
-            android:textSize="12sp"
+            android:textAllCaps="false"
+            android:textColor="#CBD5E1"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/btn_add_15"
             style="@android:style/Widget.DeviceDefault.Button.Borderless"
             android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_marginStart="4dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="2dp"
             android:layout_marginEnd="4dp"
-            android:layout_weight="1"
+            android:layout_weight="0.85"
             android:background="@drawable/notification_button_accent_bg"
             android:minWidth="0dp"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp"
+            android:padding="0dp"
             android:text="+15m"
+            android:textAllCaps="false"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/btn_add_30"
             style="@android:style/Widget.DeviceDefault.Button.Borderless"
             android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
+            android:layout_height="32dp"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="0.85"
             android:background="@drawable/notification_button_accent_bg"
             android:minWidth="0dp"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp"
+            android:padding="0dp"
             android:text="+30m"
+            android:textAllCaps="false"
             android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_cycle_mode"
+            style="@android:style/Widget.DeviceDefault.Button.Borderless"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1.15"
+            android:background="@drawable/notification_button_bg"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="Mode"
+            android:textAllCaps="false"
+            android:textColor="#E2E8F0"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_stop_focus"
+            style="@android:style/Widget.DeviceDefault.Button.Borderless"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="2dp"
+            android:layout_weight="1.15"
+            android:background="@drawable/notification_button_danger_bg"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="Turn Off"
+            android:textAllCaps="false"
+            android:textColor="#FFCDD2"
+            android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
 

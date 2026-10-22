@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,11 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Forum
-import androidx.compose.material.icons.rounded.PhoneDisabled
-import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
@@ -39,7 +35,6 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -59,11 +54,12 @@ import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import com.example.services.GameDetectorService
+import com.example.ui.theme.ExpressiveMotion
 
 /**
  * GameDetectionCard
  *
- * Material 3 Card displaying:
+ * Material 3 Expressive Card displaying:
  * 1. Real-Time Game Launch Detector toggle & Usage Stats permission alert.
  * 2. Zero-Airtime VoIP Call Auto-Reply Engine status & telemetry overview.
  * 3. Custom Game Library management for emulators and non-categorized games.
@@ -82,11 +78,22 @@ fun GameDetectionCard(
         GameDetectorService.hasUsageStatsPermission(context)
     }
 
+    val cardCorner by animateDpAsState(
+        targetValue = if (state.autoGameDetectionEnabled) 30.dp else 22.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "game_card_corner"
+    )
+    val emblemCorner by animateDpAsState(
+        targetValue = if (state.autoGameDetectionEnabled) 22.dp else 14.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "game_emblem_corner"
+    )
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .testTag("game_detection_card"),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(cardCorner),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Column(
@@ -109,7 +116,7 @@ fun GameDetectionCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Surface(
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(emblemCorner),
                         color = MaterialTheme.colorScheme.secondaryContainer,
                         modifier = Modifier.size(44.dp)
                     ) {
@@ -162,7 +169,7 @@ fun GameDetectionCard(
                     // 30s Exit Countdown Banner if game was minimized/exited
                     if (state.gameExitCountdownSeconds != null) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(18.dp),
                             color = MaterialTheme.colorScheme.errorContainer,
                             modifier = Modifier.fillMaxWidth().testTag("game_exit_countdown_banner")
                         ) {
@@ -233,7 +240,7 @@ private fun UsageAccessAlertBanner(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.errorContainer,
         modifier = modifier.fillMaxWidth()
     ) {
@@ -273,7 +280,7 @@ private fun UsageAccessAlertBanner(
                         })
                     }
                 },
-                shape = RoundedCornerShape(12.dp),
+                shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,
                     contentColor = MaterialTheme.colorScheme.onError
@@ -363,12 +370,12 @@ private fun StatusPillTag(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         color = containerColor,
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -419,7 +426,7 @@ private fun CustomGameLibrarySection(
 
             OutlinedButton(
                 onClick = onAddGameClicked,
-                shape = RoundedCornerShape(12.dp),
+                shape = CircleShape,
                 modifier = Modifier.testTag("add_custom_game_button")
             ) {
                 Icon(
@@ -437,7 +444,7 @@ private fun CustomGameLibrarySection(
 
         if (customGames.isEmpty()) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -458,6 +465,7 @@ private fun CustomGameLibrarySection(
                     InputChip(
                         selected = true,
                         onClick = { onRemoveGame(pkg) },
+                        shape = CircleShape,
                         label = {
                             Text(
                                 text = pkg.substringAfterLast('.'),

@@ -8,9 +8,11 @@ import android.app.Service
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.util.Log
 import android.view.View
@@ -20,31 +22,33 @@ import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.core.FocusProfile
+import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
+import com.example.core.WeeklyShieldSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Interactive Live Focus Controller Foreground Service.
+ * Real-Time Live Focus Controller Foreground Service.
  *
- * Implements Phase 9 specifications:
- * - Active-Only Lifecycle: only runs while an active focus profile is engaged.
- * - Live Notification in shade & lockscreen with native Chronometer countdown.
- * - Interactive RemoteViews for collapsed & expanded actions:
- *   - Swap Mode (cycles DND -> Gaming -> Work -> Sleep)
- *   - Turn Off (instantly stops focus & dismisses notification)
- *   - -15m, +15m, +30m real-time timer adjustments
- * - Background persistence watchdog: keeps NotificationGuardService bound.
+ * Delivers an always-ticking Live Notification in the notification shade and lock screen:
+ * - Promoted Top-of-Shade & Lock-Screen visibility (IMPORTANCE_LOW + VISIBILITY_PUBLIC + setOnlyAlertOnce)
+ * - Continuous 1-second live Chronometer (countdown when timed, elapsed stopwatch when untimed)
+ * - Live ProgressBar reflecting remaining session percentage or 30s Game Exit Grace countdown
+ * - Real-time blocked telemetry counters (Calls Declined & Alerts Silenced)
+ * - Instant in-place pill controls (-15m, +15m, +30m, Mode, Turn Off)
  */
 class ZenShieldForegroundService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var observerJob: Job? = null
+    private var tickerJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
@@ -84,7 +88,7 @@ class ZenShieldForegroundService : Service() {
                 stateManager.adjustRemainingTime(this, -15)
             }
             ACTION_UPDATE_NOTIFICATION -> {
-                Log.d(TAG, "Received ACTION_UPDATE_NOTIFICATION: refreshing notification UI")
+                Log.d(TAG, "Received ACTION_UPDATE_NOTIFICATION: refreshing Live Notification UI")
             }
         }
 
@@ -95,11 +99,12 @@ class ZenShieldForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // Display or refresh the Live Notification
+        val weeklyStats = stateManager.weeklyStatsFlow.value
         val notification = buildLiveFocusNotification(
-            profile = currentState.activeProfile,
-            expiryTime = currentState.expiresAtMillis
+            state = currentState,
+            weeklyStats = weeklyStats
         )
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -110,67 +115,84 @@ class ZenShieldForegroundService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Ensure we continuously observe state changes
         startObservingFocusState(stateManager)
-
-        // Start active timer countdown ticker
-        startTimerTicker(stateManager, currentState.expiresAtMillis)
-
-        // Ensure notification listener service is bound
+        startLiveNotificationTicker(stateManager)
         requestListenerRebind()
 
         return START_STICKY
     }
 
-    private var tickerJob: Job? = null
-
-    private fun startTimerTicker(stateManager: FocusStateManager, expiryTime: Long?) {
-        tickerJob?.cancel()
-        if (expiryTime == null || expiryTime <= 0L) {
-            tickerJob = null
-            return
-        }
+    /**
+     * Runs a continuous 1-second live heartbeat while Focus is active so:
+     * 1. Timed sessions expire cleanly on the exact second and update the progress bar.
+     * 2. Game exit 30-second countdown updates live in the notification shade.
+     */
+    private fun startLiveNotificationTicker(stateManager: FocusStateManager) {
+        if (tickerJob?.isActive == true) return
 
         tickerJob = serviceScope.launch {
             while (isActive) {
-                val remainingMs = expiryTime - System.currentTimeMillis()
-                if (remainingMs <= 0L) {
-                    Log.i(TAG, "Active timer countdown expired. Reverting profile to FocusProfile.OFF")
-                    stateManager.setProfile(FocusProfile.OFF)
+                val state = stateManager.state.value
+                if (state.activeProfile == FocusProfile.OFF) {
                     stopForegroundService()
                     break
                 }
-                delay(1000L.coerceAtMost(remainingMs))
+
+                val expiryTime = state.expiresAtMillis
+                if (expiryTime != null && expiryTime > 0L) {
+                    val remainingMs = expiryTime - System.currentTimeMillis()
+                    if (remainingMs <= 0L) {
+                        Log.i(TAG, "Active timer countdown expired. Reverting profile to FocusProfile.OFF")
+                        stateManager.setProfile(FocusProfile.OFF)
+                        stopForegroundService()
+                        break
+                    }
+                }
+
+                // Push live progress bar / countdown update when timed or during 30s game exit grace
+                if (expiryTime != null || state.gameExitCountdownSeconds != null) {
+                    publishNotificationUpdate(state, stateManager.weeklyStatsFlow.value)
+                }
+
+                delay(1000L)
             }
         }
     }
 
     private fun startObservingFocusState(stateManager: FocusStateManager) {
-        if (observerJob != null) return
+        if (observerJob?.isActive == true) return
 
         observerJob = serviceScope.launch {
-            stateManager.state.collect { state ->
+            combine(stateManager.state, stateManager.weeklyStatsFlow) { state, weeklyStats ->
+                state to weeklyStats
+            }.collect { (state, weeklyStats) ->
                 if (state.activeProfile == FocusProfile.OFF) {
-                    Log.d(TAG, "Focus profile changed to OFF. Stopping foreground service and removing notification.")
+                    Log.d(TAG, "Focus profile changed to OFF. Stopping foreground service and removing Live Notification.")
                     stopForegroundService()
                 } else {
-                    startTimerTicker(stateManager, state.expiresAtMillis)
-                    val notification = buildLiveFocusNotification(
-                        profile = state.activeProfile,
-                        expiryTime = state.expiresAtMillis
-                    )
-                    val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    notificationManager.notify(NOTIFICATION_ID, notification)
-                    Log.d(TAG, "Refreshed Live Focus Notification for ${state.activeProfile.displayName}")
+                    publishNotificationUpdate(state, weeklyStats)
                 }
             }
         }
     }
 
+    private fun publishNotificationUpdate(
+        state: FocusSessionState,
+        weeklyStats: WeeklyShieldSummary
+    ) {
+        val notification = buildLiveFocusNotification(state = state, weeklyStats = weeklyStats)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
     private fun buildLiveFocusNotification(
-        profile: FocusProfile,
-        expiryTime: Long?
+        state: FocusSessionState,
+        weeklyStats: WeeklyShieldSummary
     ): Notification {
+        val profile = state.activeProfile
+        val expiryTime = state.expiresAtMillis
+        val now = System.currentTimeMillis()
+
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
@@ -180,63 +202,120 @@ class ZenShieldForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Action PendingIntents
         val cyclePendingIntent = createServicePendingIntent(ACTION_CYCLE_MODE, 101)
         val stopPendingIntent = createServicePendingIntent(ACTION_STOP_FOCUS, 102)
         val sub15PendingIntent = createServicePendingIntent(ACTION_SUBTRACT_15_MIN, 103)
         val add15PendingIntent = createServicePendingIntent(ACTION_ADD_15_MIN, 104)
         val add30PendingIntent = createServicePendingIntent(ACTION_ADD_30_MIN, 105)
 
-        val isTimed = expiryTime != null && expiryTime > System.currentTimeMillis()
+        val isTimed = expiryTime != null && expiryTime > now
+        val remainingMs = if (isTimed && expiryTime != null) (expiryTime - now).coerceAtLeast(0L) else 0L
+        val elapsedMs = ((now - (state.sessionStartTimeMillis ?: now))).coerceAtLeast(0L)
 
-        // 1. Collapsed RemoteViews
+        // Convert wall-clock timestamps to SystemClock.elapsedRealtime() base for RemoteViews Chronometer
+        val chronometerBase = if (isTimed) {
+            SystemClock.elapsedRealtime() + remainingMs
+        } else {
+            SystemClock.elapsedRealtime() - elapsedMs
+        }
+
+        // Compute live progress percentage (0..100)
+        val graceSeconds = state.gameExitCountdownSeconds
+        val progressPercent = when {
+            graceSeconds != null -> ((graceSeconds / 30f) * 100f).toInt().coerceIn(3, 100)
+            isTimed && expiryTime != null -> {
+                val startMillis = state.sessionStartTimeMillis ?: (expiryTime - 3600_000L)
+                val totalSpan = (expiryTime - startMillis).coerceAtLeast(60_000L)
+                ((remainingMs.toFloat() / totalSpan.toFloat()) * 100f).toInt().coerceIn(4, 100)
+            }
+            else -> 100
+        }
+
+        // Today's live telemetry counts
+        val todayStats = weeklyStats.days.lastOrNull()
+        val liveCallsDeclined = todayStats?.declinedCalls ?: state.totalShieldedCalls
+        val liveAlertsSilenced = todayStats?.silencedNotifications ?: state.totalShieldedNotifications
+
+        val modeTitle = when (profile) {
+            FocusProfile.GAMING -> "GAMING FOCUS"
+            FocusProfile.DO_NOT_DISTURB -> "DO NOT DISTURB"
+            FocusProfile.WORK -> "WORK FOCUS"
+            FocusProfile.SLEEP -> "SLEEP SHIELD"
+            FocusProfile.OFF -> "SENTINAL STANDBY"
+        }
+
+        val ruleSummary = buildString {
+            append(if (state.autoReplyEnabled) "Call Auto-Reply ON" else "Silent Call Bouncer")
+            append(" • ")
+            append(if (state.declineAllCallsRegardless) "Zero-Tolerance Lockdown" else "Messages Silenced")
+        }
+
+        // 1. Collapsed Live Notification RemoteViews
         val collapsedViews = RemoteViews(packageName, R.layout.notification_live_focus).apply {
-            setTextViewText(R.id.tv_title, "🛡️ ${profile.displayName} Active")
-            val subtitle = if (isTimed) {
-                "Auto-bouncing calls & filtering alerts"
+            setTextViewText(R.id.tv_title, modeTitle)
+            if (graceSeconds != null) {
+                setTextViewText(R.id.tv_live_badge, "EXIT ${graceSeconds}s")
+                setTextColor(R.id.tv_live_badge, Color.parseColor("#FFB300"))
+                setInt(R.id.tv_live_badge, "setBackgroundResource", R.drawable.notification_chip_grace_bg)
             } else {
-                "Until turned off • Shielding calls"
+                setTextViewText(R.id.tv_live_badge, "LIVE")
+                setTextColor(R.id.tv_live_badge, Color.parseColor("#38EF7D"))
+                setInt(R.id.tv_live_badge, "setBackgroundResource", R.drawable.notification_chip_bg)
             }
-            setTextViewText(R.id.tv_subtitle, subtitle)
 
-            if (isTimed && expiryTime != null) {
-                setViewVisibility(R.id.chrono_timer, View.VISIBLE)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    setChronometerCountDown(R.id.chrono_timer, true)
-                }
-                setChronometer(R.id.chrono_timer, expiryTime, "%s remaining", true)
-            } else {
-                setViewVisibility(R.id.chrono_timer, View.GONE)
+            setTextViewText(
+                R.id.tv_subtitle,
+                "• $liveCallsDeclined Calls • $liveAlertsSilenced Alerts"
+            )
+
+            setViewVisibility(R.id.chrono_timer, View.VISIBLE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                setChronometerCountDown(R.id.chrono_timer, isTimed)
             }
+            setChronometer(
+                R.id.chrono_timer,
+                chronometerBase,
+                if (isTimed) "%s left" else "%s",
+                true
+            )
+
+            setProgressBar(R.id.pb_collapsed_progress, 100, progressPercent, false)
 
             setOnClickPendingIntent(R.id.btn_quick_add, add15PendingIntent)
             setOnClickPendingIntent(R.id.btn_quick_stop, stopPendingIntent)
         }
 
-        // 2. Expanded RemoteViews
+        // 2. Expanded Live HUD RemoteViews
         val expandedViews = RemoteViews(packageName, R.layout.notification_live_focus_expanded).apply {
-            setTextViewText(R.id.tv_expanded_title, "🛡️ ${profile.displayName} Active")
-            val subtitle = if (isTimed) {
-                "Auto-bouncing calls & filtering alerts"
-            } else {
-                "Until turned off • Shielding calls & silencing noise"
-            }
-            setTextViewText(R.id.tv_expanded_subtitle, subtitle)
+            setTextViewText(R.id.tv_expanded_title, modeTitle)
+            setTextViewText(R.id.tv_expanded_subtitle, ruleSummary)
 
-            if (isTimed && expiryTime != null) {
-                setViewVisibility(R.id.chrono_expanded, View.VISIBLE)
-                setViewVisibility(R.id.tv_expanded_duration, View.GONE)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    setChronometerCountDown(R.id.chrono_expanded, true)
-                }
-                setChronometer(R.id.chrono_expanded, expiryTime, "%s remaining", true)
+            if (graceSeconds != null) {
+                setTextViewText(R.id.tv_expanded_status, "EXITING IN ${graceSeconds}s")
+                setTextColor(R.id.tv_expanded_status, Color.parseColor("#FFB300"))
+                setInt(R.id.tv_expanded_status, "setBackgroundResource", R.drawable.notification_chip_grace_bg)
             } else {
-                setViewVisibility(R.id.chrono_expanded, View.GONE)
-                setViewVisibility(R.id.tv_expanded_duration, View.VISIBLE)
-                setTextViewText(R.id.tv_expanded_duration, "Until Turned Off")
+                setTextViewText(R.id.tv_expanded_status, "LIVE • ACTIVE")
+                setTextColor(R.id.tv_expanded_status, Color.parseColor("#38EF7D"))
+                setInt(R.id.tv_expanded_status, "setBackgroundResource", R.drawable.notification_chip_bg)
             }
 
-            // Bind Actions
+            setViewVisibility(R.id.chrono_expanded, View.VISIBLE)
+            setViewVisibility(R.id.tv_expanded_duration, View.GONE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                setChronometerCountDown(R.id.chrono_expanded, isTimed)
+            }
+            setChronometer(
+                R.id.chrono_expanded,
+                chronometerBase,
+                if (isTimed) "%s left" else "Elapsed %s",
+                true
+            )
+
+            setProgressBar(R.id.pb_expanded_progress, 100, progressPercent, false)
+            setTextViewText(R.id.tv_live_calls_count, liveCallsDeclined.toString())
+            setTextViewText(R.id.tv_live_alerts_count, liveAlertsSilenced.toString())
+
             setOnClickPendingIntent(R.id.btn_cycle_mode, cyclePendingIntent)
             setOnClickPendingIntent(R.id.btn_stop_focus, stopPendingIntent)
             setOnClickPendingIntent(R.id.btn_sub_15, sub15PendingIntent)
@@ -246,14 +325,19 @@ class ZenShieldForegroundService : Service() {
 
         val builder = NotificationCompat.Builder(this, LIVE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle("$modeTitle • Live Shield")
+            .setContentText("$liveCallsDeclined Calls Declined • $liveAlertsSilenced Alerts Silenced")
             .setContentIntent(contentIntent)
             .setCustomContentView(collapsedViews)
             .setCustomBigContentView(expandedViews)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomHeadsUpContentView(collapsedViews)
             .setOngoing(true)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
         if (isTimed && expiryTime != null) {
             builder.setWhen(expiryTime)
@@ -262,7 +346,11 @@ class ZenShieldForegroundService : Service() {
                 builder.setChronometerCountDown(true)
             }
         } else {
-            builder.setShowWhen(false)
+            builder.setWhen(state.sessionStartTimeMillis ?: now)
+            builder.setUsesChronometer(true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                builder.setChronometerCountDown(false)
+            }
         }
 
         return builder.build()
@@ -284,12 +372,12 @@ class ZenShieldForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 LIVE_CHANNEL_ID,
-                "Sentinal Live Focus Controller",
-                NotificationManager.IMPORTANCE_MIN
+                "Sentinal Live Focus Activity",
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Displays the interactive Live Focus Controller notification and countdown timer"
+                description = "Pinned real-time Live Notification with ticking chronometer, progress bar, and live blocked call/alert telemetry"
                 setShowBadge(false)
-                lockscreenVisibility = Notification.VISIBILITY_SECRET
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setSound(null, null)
                 enableVibration(false)
             }
@@ -303,7 +391,6 @@ class ZenShieldForegroundService : Service() {
             try {
                 val component = ComponentName(this, NotificationGuardService::class.java)
                 NotificationListenerService.requestRebind(component)
-                Log.d(TAG, "Requested rebind for NotificationGuardService")
             } catch (e: Exception) {
                 Log.w(TAG, "Could not request rebind for NotificationGuardService: ${e.message}")
             }
@@ -355,7 +442,7 @@ class ZenShieldForegroundService : Service() {
 
     companion object {
         private const val TAG = "ZenShieldForeground"
-        const val LIVE_CHANNEL_ID = "zenshield_live_focus_channel"
+        const val LIVE_CHANNEL_ID = "zenshield_live_activity_channel_v2"
         const val NOTIFICATION_ID = 9001
 
         const val ACTION_CYCLE_MODE = "com.example.zenshield.ACTION_CYCLE_MODE"

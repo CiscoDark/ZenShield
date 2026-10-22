@@ -1,88 +1,64 @@
-# Restrict Automated Replies Exclusively to Declined Calls
+# Sentinal — Material 3 Expressive Design Upgrade Plan
 
-Eliminate automated reply dispatching on incoming text and chat messages, restricting auto-reply responses solely to blocked/declined calls while ensuring incoming messages are cleanly silenced and dismissed without disturbing the user.
+## 1. Visual & Interaction Philosophy
+We will upgrade **Sentinal** to a full **Material 3 Expressive** interface that pairs tactile shape morphing, bouncy spring physics, and high-contrast editorial typography with profile-reactive color palettes:
 
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> The user confirmed the following decisions during Phase 1 clarification:
-> - **Auto-Reply Restriction**: Automated replies must only be sent for declined/blocked calls, not for incoming text or chat messages.
-> - **Incoming Message Handling**: Regular incoming chat and SMS messages should be silenced and dismissed without sending any reply.
-
-- **Confirmed Decision 1**: Remove automatic RemoteInput messaging reply behavior from incoming text/chat notifications.
-- **Confirmed Decision 2**: Preserve auto-reply capability exclusively for Stage 1 / Stage 2 VoIP declined calls and blocked callers.
-- **Confirmed Decision 3**: Maintain Smart Urgent Breakthrough (OTPs, 2FA, logistics) and Whitelist exemptions undisturbed so critical alerts still reach the user.
+- **Dynamic Shape Morphing**: Interactive cards, Bento profile tiles, duration chips, and primary action buttons dynamically morph their corner radii and proportions based on selection and press states (transitioning smoothly between sculpted squircles, asymmetric expressive containers, and full pills).
+- **Bouncy Spring Motion System**: All state transitions—including profile switching, shield activation, telemetry counter updates, and navigation tab changes—are driven by expressive spring physics (`dampingRatio = Spring.DampingRatioLowBouncy` and `Spring.DampingRatioMediumBouncy`) instead of linear tween curves.
+- **Editorial Typography & Scannable Hierarchy**: Oversized `Plus Jakarta Sans` display headers and high-contrast `JetBrains Mono` live telemetry readouts create clear focal points on the Hero Shield Console and Weekly Analytics views.
+- **Profile-Reactive Aura & Surface Tinting**: Tonal surface containers, glowing borders, and multi-stop radial/linear gradients adapt smoothly to the active Focus profile (**Gaming**, **Do Not Disturb**, **Work**, **Sleep**, or **Standby**), while respecting Material You dynamic color and AMOLED Pure Black modes.
 
 ---
 
-### 1. Overview & Core Concept
+## 2. Architecture & Expressive Component Flow
 
-Sentinal protects user focus during Gaming, Deep Work, and Do Not Disturb sessions. Previously, Sentinal intercepted incoming notifications from messaging apps (e.g., WhatsApp, Telegram, Google Messages) and attempted to send an automated focus status reply via `RemoteInput` to text messages. This caused unwanted messages to be sent to anyone who texted the user.
-
-This change will:
-1. Completely remove automated reply dispatching on standard incoming chat/SMS notifications.
-2. Ensure regular messages from messaging apps are quietly silenced and dismissed (zero-trace dismissal) without triggering replies.
-3. Keep automated focus responses reserved strictly for calls that are actively declined or blocked.
-4. Update UI labels and settings descriptions in Sentinal to clearly communicate that auto-replies apply to declined calls.
-
----
-
-### 2. User Experience & Visual Design
-
-- **Incoming Text Messages During Focus**:
-  - A friend or colleague sends a WhatsApp or SMS message while Focus mode is active.
-  - The notification is evaluated for whitelisting or urgent keywords (e.g., banking OTPs, delivery alerts).
-  - If not urgent/whitelisted, the notification is cleanly silenced and dismissed.
-  - **Zero automated messages are sent** back to the sender.
-- **Incoming Calls During Focus**:
-  - An incoming VoIP or cellular call arrives while Focus mode is active.
-  - Sentinal checks Starred Contacts and 3-Minute Repeat Caller rules.
-  - If rejected/declined, Sentinal dispatches the automated focus reply informing the caller that the user is focused, with instructions to reply 'URGENT' if critical.
-- **Settings & Dashboard UI Polish**:
-  - The Auto-Reply preference card label and summary in `SettingsScreen.kt` will be updated from generic auto-reply to "Auto-Reply on Declined Calls" with the subtitle "Notify callers when their call is rejected during focus".
-
----
-
-### 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Complete Elimination of Chat-Message Auto-Replies vs. Optional Toggle**
-  - *Chosen Approach*: Discontinue auto-replies on regular chat/SMS messages directly, keeping auto-replies strictly for declined calls as requested by the user.
-  - *Why*: Auto-replying to every group chat or casual text message creates unnecessary noise, annoys contacts, and disrupts normal chat threads. Call rejection auto-replying is the primary high-value use case.
-  - *Alternatives Considered*: Adding an extra toggle setting. Rejected because the user explicitly stated it should not be doing this, and streamlining reduces configuration fatigue.
-- **Decision 2: RemoteInput Session Caching for VoIP Follow-Up**
-  - *Chosen Approach*: Retain `remoteInputSessions` caching for pre-warming VoIP reply channels, but eliminate the active trigger on incoming chat notifications.
-  - *Why*: Allows Stage 1 & Stage 2 VoIP call rejection auto-replies to continue functioning smoothly when a VoIP call is blocked.
-
----
-
-### 4. Technical Architecture & Data Strategy
-
-```
-┌────────────────────────────────────────────────────────┐
-│             NotificationGuardService                   │
-└────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-          Is Outgoing Call? ───► YES ──► Record & Bypass (No Reply)
-                           │ NO
-                           ▼
-          Is Incoming Call? ───► YES ──► Check Repeat/Starred
-                           │              │
-                           │              ▼
-                           │             Decline & Send Call Auto-Reply
-                           │
-                           ▼ NO (Regular Notification)
-          Is Urgent / Whitelisted? ──► YES ──► Allow through
-                           │ NO
-                           ▼
-             Silence & Dismiss Cleanly (ZERO Auto-Reply)
+```text
++-------------------------------------------------------------------------+
+|                    Material 3 Expressive Theme Engine                   |
+|  - ExpressiveShapes token scale (sculpted squircles <-> pill radii)     |
+|  - ExpressiveMotion spring specs (bouncy spatial & color transitions)   |
+|  - Profile-Reactive Tonal Palettes (Gaming / DND / Work / Sleep)        |
++------------------------------------+------------------------------------+
+                                     |
+         +---------------------------+---------------------------+
+         |                           |                           |
+         v                           v                           v
++-----------------------+   +-----------------------+   +-----------------------+
+| Expressive Hero &     |   | Morphing Bento Grid   |   | Floating Expressive   |
+| Telemetry Cards       |   | & Control Pills       |   | Pill Toolbar          |
+| - Animated corner     |   | - 2x2 profile tiles   |   | - Elevated capsule    |
+|   morphing on active  |   |   morph from 26dp     |   |   docked above nav    |
+|   shield state        |   |   squircle to 42dp    |   |   bar insets          |
+| - Breathing radial    |   |   expressive pill     |   | - Expanding spring    |
+|   aura & spring       |   | - Spring scale &      |   |   pill indicator with |
+|   toggle button       |   |   border luminance    |   |   icon + active label |
++-----------------------+   +-----------------------+   +-----------------------+
 ```
 
-- **Core Code Changes**:
-  - `NotificationGuardService.kt`:
-    - Remove Section C auto-reply execution on standard messaging notifications (`attemptRemoteInputAutoReply` call in regular notification flow).
-    - Ensure regular notifications flow directly to Zero-Trace dismissal without sending messages.
-  - `SettingsScreen.kt` & `strings.xml`:
-    - Update user-facing copy to clarify that auto-replies apply to declined calls.
-  - `ExampleRobolectricTest.kt`:
-    - Add unit tests verifying incoming chat notifications do not generate auto-replies, while call rejection paths retain auto-reply capability.
+---
+
+## 3. Core Capabilities & UI Upgrades
+
+### A. Material 3 Expressive Theme & Motion Tokens
+- **Expressive Shape Scale**: Define an explicit M3 Expressive `Shapes` hierarchy (`extraSmall` through `extraLarge`) alongside reusable animated corner-morphing helpers that interpolate corner radii on press and selection.
+- **Expressive Spring Presets**: Centralize bouncy spatial springs (for scale, width expansion, and corner radius morphing) and smooth tonal springs (for container colors, glowing borders, and background gradients).
+- **Editorial Type Scale Refinements**: Enhance display, headline, and monospace telemetry styles with tighter display tracking and bold weight contrast for instant scannability.
+
+### B. Expressive Hero Shield Console & Bento Profile Selector
+- **Morphing Hero Status Card**:
+  - Morphs its outer silhouette and inner status badge geometry when switching between **Standby** and **Active Shield** states.
+  - Features an animated multi-stop aura backdrop, oversized live countdown/elapsed readout, expressive pill metric badges, and a spring-loaded primary action button that morphs shape on activation.
+- **Shape-Morphing 2x2 Bento Profile Grid**:
+  - Each Focus Profile tile (**Gaming**, **DND**, **Work**, **Sleep**) dynamically morphs its corner radius, scale, and tonal elevation when selected—transforming from a structured squircle card into a sculpted expressive pill container with an illuminated accent border and animated status indicator.
+- **Expressive Duration & Simulation Pills**:
+  - Timer preset chips (`15m`, `30m`, `45m`, `1h`, `2h`, `∞`) and simulation triggers morph from compact rounded rectangles into expanded capsules with bouncy spring feedback when selected.
+
+### C. Floating Expressive Pill Toolbar (Bottom Navigation)
+- **Elevated Capsule Container**:
+  - Replace the traditional full-width docked bottom bar with a **Floating Expressive Pill Toolbar** suspended above the system navigation bar (`WindowInsets.navigationBars`), styled with high-contrast tonal surface elevation, subtle glass/border highlights, and a full capsule silhouette.
+- **Morphing Active Tab Indicator**:
+  - Selecting a workspace tab (**Shield**, **Analytics**, **Rules**, **System**) triggers a bouncy spring expansion where the active tab morphs into a vibrant pill housing both the filled icon and label, while inactive tabs remain compact icon targets with full 48dp accessibility touch bounds.
+
+### D. Expressive Analytics, Rules & System Cards
+- **Weekly Shield Analytics & Telemetry**: Upgrade the Weekly Shield Activity chart card, Live Notification HUD Preview card, and Game Detection card with expressive container headers, spring-animated filter pills, and sculpted metric containers.
+- **Rules & System Cards**: Refresh the Call Auto-Reply, Smart Automation, and Permission Diagnostics cards with expressive toggle rows, morphing status chips, and cohesive M3 Expressive surface hierarchy.

@@ -13,6 +13,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.ui.theme.ExpressiveHaptics
 import com.example.ui.theme.FocusThemePreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,11 +28,30 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
+
+enum class InterceptType(val badgeLabel: String) {
+    CALL_DECLINED("CALL BOUNCED"),
+    VOIP_CALL_BOUNCED("VOIP DECLINED"),
+    ALERT_SILENCED("SILENCED"),
+    AUTO_REPLY_SENT("AUTO-REPLY")
+}
+
+data class InterceptEvent(
+    val id: String = UUID.randomUUID().toString(),
+    val timestampMillis: Long = System.currentTimeMillis(),
+    val timeLabel: String,
+    val type: InterceptType,
+    val sourceLabel: String,
+    val detail: String,
+    val profileName: String
+)
 
 data class FocusSessionState(
     val activeProfile: FocusProfile = FocusProfile.OFF,
     val expiresAtMillis: Long? = null,
     val durationOption: DurationOption = DurationOption.UNTIL_TURNED_OFF,
+    val customDurationMinutes: Int = 60,
     val dimLockScreenEnabled: Boolean = true,
     val allowStarredContactsOnly: Boolean = true,
     val blockRepeatedCallers: Boolean = false,
@@ -57,7 +77,8 @@ data class FocusSessionState(
     val totalShieldedNotifications: Int = 0,
     val sessionStartTimeMillis: Long? = null,
     val declineAllCallsRegardless: Boolean = false,
-    val gameExitCountdownSeconds: Int? = null
+    val gameExitCountdownSeconds: Int? = null,
+    val recentIntercepts: List<InterceptEvent> = emptyList()
 )
 
 data class DailyShieldStats(
@@ -164,7 +185,9 @@ class FocusStateManager private constructor(context: Context) {
 
         val shieldedCalls = prefs.getInt(KEY_SHIELDED_CALLS, 0)
         val shieldedNotifs = prefs.getInt(KEY_SHIELDED_NOTIFS, 0)
+        val customDurationMins = prefs.getInt(KEY_CUSTOM_DURATION_MINS, 60).coerceIn(5, 480)
         val startTime = if (prefs.contains(KEY_SESSION_START)) prefs.getLong(KEY_SESSION_START, 0L).takeIf { it > 0 } else null
+        val seedIntercepts = createSeedIntercepts()
 
         // If saved session already expired in the past, reset to OFF and clean persistent state
         if (profile != FocusProfile.OFF && expiresAt != null && System.currentTimeMillis() >= expiresAt) {
@@ -177,6 +200,7 @@ class FocusStateManager private constructor(context: Context) {
                 activeProfile = FocusProfile.OFF,
                 expiresAtMillis = null,
                 durationOption = DurationOption.UNTIL_TURNED_OFF,
+                customDurationMinutes = customDurationMins,
                 dimLockScreenEnabled = dimLockScreen,
                 allowStarredContactsOnly = profile.defaultAllowStarredOnly,
                 blockRepeatedCallers = profile.defaultBlockRepeatedCalls,
@@ -200,7 +224,8 @@ class FocusStateManager private constructor(context: Context) {
                 totalShieldedCalls = shieldedCalls,
                 totalShieldedNotifications = shieldedNotifs,
                 sessionStartTimeMillis = null,
-                declineAllCallsRegardless = declineAllCalls
+                declineAllCallsRegardless = declineAllCalls,
+                recentIntercepts = seedIntercepts
             )
         }
 
@@ -208,6 +233,7 @@ class FocusStateManager private constructor(context: Context) {
             activeProfile = profile,
             expiresAtMillis = expiresAt,
             durationOption = durationOption,
+            customDurationMinutes = customDurationMins,
             dimLockScreenEnabled = dimLockScreen,
             allowStarredContactsOnly = allowStarredOnly,
             blockRepeatedCallers = blockRepeated,
@@ -231,7 +257,39 @@ class FocusStateManager private constructor(context: Context) {
             totalShieldedCalls = shieldedCalls,
             totalShieldedNotifications = shieldedNotifs,
             sessionStartTimeMillis = startTime,
-            declineAllCallsRegardless = declineAllCalls
+            declineAllCallsRegardless = declineAllCalls,
+            recentIntercepts = seedIntercepts
+        )
+    }
+
+    private fun createSeedIntercepts(): List<InterceptEvent> {
+        val now = System.currentTimeMillis()
+        val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        return listOf(
+            InterceptEvent(
+                timestampMillis = now - 180_000L,
+                timeLabel = fmt.format(Date(now - 180_000L)),
+                type = InterceptType.VOIP_CALL_BOUNCED,
+                sourceLabel = "WhatsApp Voice Call",
+                detail = "Declined incoming call & dispatched Focus auto-reply",
+                profileName = "Gaming Focus"
+            ),
+            InterceptEvent(
+                timestampMillis = now - 540_000L,
+                timeLabel = fmt.format(Date(now - 540_000L)),
+                type = InterceptType.ALERT_SILENCED,
+                sourceLabel = "Group Chat Mention",
+                detail = "Silenced & dismissed without auto-reply",
+                profileName = "Do Not Disturb"
+            ),
+            InterceptEvent(
+                timestampMillis = now - 1_200_000L,
+                timeLabel = fmt.format(Date(now - 1_200_000L)),
+                type = InterceptType.CALL_DECLINED,
+                sourceLabel = "Cellular Incoming Call",
+                detail = "Instant busy rejection • 3-min repeat window active",
+                profileName = "Work Focus"
+            )
         )
     }
 
@@ -487,6 +545,7 @@ class FocusStateManager private constructor(context: Context) {
             isAutoTriggeredByGame = true,
             durationOption = DurationOption.UNTIL_TURNED_OFF,
             expiresAtMillis = null,
+            sessionStartTimeMillis = System.currentTimeMillis(),
             gameExitCountdownSeconds = null
         )
         _state.value = updated
@@ -494,6 +553,9 @@ class FocusStateManager private constructor(context: Context) {
         persistState(updated)
         syncInterruptionFilter(FocusProfile.GAMING)
         applyFocusLockScreen(appContext, FocusProfile.GAMING, updated.dimLockScreenEnabled)
+        runCatching {
+            com.example.ui.GamingModePopupManager.showGamingModeActivatedPopup(appContext, packageName)
+        }
         runCatching {
             com.example.services.ZenShieldForegroundService.start(appContext)
         }
@@ -686,8 +748,20 @@ class FocusStateManager private constructor(context: Context) {
         // Sync Focus Lock Screen
         applyFocusLockScreen(appContext, profile, updated.dimLockScreenEnabled)
 
+        // Trigger Spring-Correlated Haptic Feedback on Focus Toggle
+        if (profile != FocusProfile.OFF) {
+            ExpressiveHaptics.playFocusActivated(appContext)
+        } else {
+            ExpressiveHaptics.playFocusDeactivated(appContext)
+        }
+
         // Sync Bulletproof Watchdog & Live Focus Controller Foreground Service
         if (profile != FocusProfile.OFF) {
+            if (profile == FocusProfile.GAMING) {
+                runCatching {
+                    com.example.ui.GamingModePopupManager.showGamingModeActivatedPopup(appContext, "Focus Shield")
+                }
+            }
             runCatching {
                 com.example.services.ZenShieldForegroundService.start(appContext)
             }
@@ -766,6 +840,13 @@ class FocusStateManager private constructor(context: Context) {
         persistState(updated)
         syncInterruptionFilter(nextProfile)
         applyFocusLockScreen(appContext, nextProfile, updated.dimLockScreenEnabled)
+        ExpressiveHaptics.playFocusActivated(appContext)
+
+        if (nextProfile == FocusProfile.GAMING) {
+            runCatching {
+                com.example.ui.GamingModePopupManager.showGamingModeActivatedPopup(appContext, "Quick Mode Cycle")
+            }
+        }
 
         runCatching {
             com.example.services.ZenShieldForegroundService.update(context)
@@ -774,12 +855,58 @@ class FocusStateManager private constructor(context: Context) {
 
     fun setDuration(duration: DurationOption) {
         val currentProfile = _state.value.activeProfile
+        val customMins = duration.durationMinutes?.toInt() ?: _state.value.customDurationMinutes
         if (currentProfile != FocusProfile.OFF) {
             setProfile(currentProfile, duration)
+            _state.value = _state.value.copy(customDurationMinutes = customMins)
         } else {
-            val updated = _state.value.copy(durationOption = duration)
+            val updated = _state.value.copy(
+                durationOption = duration,
+                customDurationMinutes = customMins
+            )
             _state.value = updated
             persistState(updated)
+        }
+    }
+
+    /**
+     * Sets a custom timer duration (in minutes, from 5m to 480m / 8h) from the interactive
+     * Material 3 Expressive duration slider. If a Focus profile is currently active, immediately
+     * updates the live countdown expiration.
+     */
+    fun setCustomDurationMinutes(minutes: Int) {
+        val clamped = minutes.coerceIn(5, 480)
+        val current = _state.value
+        val now = System.currentTimeMillis()
+        val newExpires = if (current.activeProfile != FocusProfile.OFF) {
+            now + clamped * 60_000L
+        } else {
+            current.expiresAtMillis
+        }
+
+        if (current.activeProfile != FocusProfile.OFF && newExpires != null) {
+            expirationJob?.cancel()
+            startExpirationCountdown(newExpires)
+        }
+
+        val matchingPreset = when (clamped) {
+            45 -> DurationOption.FOR_45_MINUTES
+            60 -> DurationOption.FOR_ONE_HOUR
+            120 -> DurationOption.FOR_TWO_HOURS
+            else -> current.durationOption
+        }
+
+        val updated = current.copy(
+            customDurationMinutes = clamped,
+            durationOption = matchingPreset,
+            expiresAtMillis = newExpires
+        )
+        _state.value = updated
+        persistState(updated)
+        if (current.activeProfile != FocusProfile.OFF) {
+            runCatching {
+                com.example.services.ZenShieldForegroundService.update(appContext)
+            }
         }
     }
 
@@ -820,9 +947,34 @@ class FocusStateManager private constructor(context: Context) {
             .apply()
     }
 
-    fun incrementShieldedCall() {
-        val count = _state.value.totalShieldedCalls + 1
-        _state.value = _state.value.copy(totalShieldedCalls = count)
+    fun incrementShieldedCall(
+        callerLabel: String = "Incoming Call",
+        isVoip: Boolean = false
+    ) {
+        val current = _state.value
+        val count = current.totalShieldedCalls + 1
+        val now = System.currentTimeMillis()
+        val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now))
+        val activeName = if (current.activeProfile != FocusProfile.OFF) current.activeProfile.displayName else "Shield Guard"
+
+        val callEvent = InterceptEvent(
+            timestampMillis = now,
+            timeLabel = timeStr,
+            type = if (isVoip) InterceptType.VOIP_CALL_BOUNCED else InterceptType.CALL_DECLINED,
+            sourceLabel = callerLabel,
+            detail = if (current.autoReplyEnabled) {
+                "Call declined • Auto-reply dispatched to caller"
+            } else {
+                "Call declined silently • Zero ring interruption"
+            },
+            profileName = activeName
+        )
+
+        val updatedIntercepts = (listOf(callEvent) + current.recentIntercepts).take(15)
+        _state.value = current.copy(
+            totalShieldedCalls = count,
+            recentIntercepts = updatedIntercepts
+        )
         prefs.edit().putInt(KEY_SHIELDED_CALLS, count).apply()
 
         val todayKey = getTodayDateKey()
@@ -830,11 +982,33 @@ class FocusStateManager private constructor(context: Context) {
         val currentDaily = prefs.getInt(callsKey, 0) + 1
         prefs.edit().putInt(callsKey, currentDaily).apply()
         _weeklyStatsFlow.value = calculateWeeklyStats()
+        ExpressiveHaptics.playNotificationDismissed(appContext)
     }
 
-    fun incrementShieldedNotification() {
-        val count = _state.value.totalShieldedNotifications + 1
-        _state.value = _state.value.copy(totalShieldedNotifications = count)
+    fun incrementShieldedNotification(
+        sourceApp: String = "Incoming Notification",
+        detail: String = "Silenced & dismissed without auto-reply"
+    ) {
+        val current = _state.value
+        val count = current.totalShieldedNotifications + 1
+        val now = System.currentTimeMillis()
+        val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now))
+        val activeName = if (current.activeProfile != FocusProfile.OFF) current.activeProfile.displayName else "Shield Guard"
+
+        val notifEvent = InterceptEvent(
+            timestampMillis = now,
+            timeLabel = timeStr,
+            type = InterceptType.ALERT_SILENCED,
+            sourceLabel = sourceApp,
+            detail = detail,
+            profileName = activeName
+        )
+
+        val updatedIntercepts = (listOf(notifEvent) + current.recentIntercepts).take(15)
+        _state.value = current.copy(
+            totalShieldedNotifications = count,
+            recentIntercepts = updatedIntercepts
+        )
         prefs.edit().putInt(KEY_SHIELDED_NOTIFS, count).apply()
 
         val todayKey = getTodayDateKey()
@@ -842,6 +1016,20 @@ class FocusStateManager private constructor(context: Context) {
         val currentDaily = prefs.getInt(notifsKey, 0) + 1
         prefs.edit().putInt(notifsKey, currentDaily).apply()
         _weeklyStatsFlow.value = calculateWeeklyStats()
+        ExpressiveHaptics.playNotificationDismissed(appContext)
+    }
+
+    fun dismissInterceptEvent(eventId: String) {
+        val current = _state.value
+        val filtered = current.recentIntercepts.filterNot { it.id == eventId }
+        _state.value = current.copy(recentIntercepts = filtered)
+        ExpressiveHaptics.playNotificationDismissed(appContext)
+    }
+
+    fun clearInterceptHistory() {
+        val current = _state.value
+        _state.value = current.copy(recentIntercepts = emptyList())
+        ExpressiveHaptics.playNotificationDismissed(appContext)
     }
 
     private fun getTodayDateKey(): String {
@@ -1090,6 +1278,7 @@ class FocusStateManager private constructor(context: Context) {
             .putString(KEY_PREVIOUS_PROFILE_BEFORE_GAME, state.previousProfileBeforeGame.id)
             .putStringSet(KEY_CUSTOM_GAME_PACKAGES, state.customGamePackages)
             .putBoolean(KEY_DECLINE_ALL_CALLS, state.declineAllCallsRegardless)
+            .putInt(KEY_CUSTOM_DURATION_MINS, state.customDurationMinutes)
 
         if (state.expiresAtMillis != null && state.expiresAtMillis > System.currentTimeMillis() && state.activeProfile != FocusProfile.OFF) {
             editor.putLong(KEY_EXPIRES_AT, state.expiresAtMillis)
@@ -1136,6 +1325,7 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_ACTIVE_PROFILE = "key_active_profile"
         private const val KEY_EXPIRES_AT = "key_expires_at"
         private const val KEY_DURATION_OPTION = "key_duration_option"
+        private const val KEY_CUSTOM_DURATION_MINS = "key_custom_duration_mins"
         private const val KEY_SESSION_START = "key_session_start"
         private const val KEY_DIM_LOCK_SCREEN = "key_dim_lock_screen"
         private const val KEY_ALLOW_STARRED_ONLY = "key_allow_starred_only"

@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to restrict automated replies strictly to declined/missed calls, eliminating unwanted automated messages to incoming SMS/chat messages, and ensuring incoming messages are cleanly silenced and dismissed.",
-  "updatedAt":  "2026-10-22T14:59:51.280596009Z",
+  "summary":  "Implementation plan for the Material 3 Expressive design upgrade in Sentinal, featuring bouncy spring physics, dynamic corner-radius shape morphing across Bento profile tiles and controls, editorial display typography, and a Floating Expressive Pill Toolbar navigation bar.",
+  "updatedAt":  "2026-10-22T17:21:43.261517239Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

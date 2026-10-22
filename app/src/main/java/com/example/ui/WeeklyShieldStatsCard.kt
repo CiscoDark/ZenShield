@@ -2,13 +2,13 @@ package com.example.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import com.example.core.DailyShieldStats
 import com.example.core.FocusStateManager
 import com.example.core.WeeklyShieldSummary
+import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.JetBrainsMonoFontFamily
 
 private enum class ChartMetricFilter {
@@ -79,9 +80,8 @@ private enum class ChartMetricFilter {
 }
 
 /**
- * Recharts-inspired Interactive Data Visualization Component for Jetpack Compose.
- * Combines smooth spline area overlays with dual-column bar charts, Y-axis scale ticks,
- * interactive floating tooltips, metric filters, and real-time simulation triggers.
+ * Recharts-inspired Interactive Data Visualization Component for Jetpack Compose
+ * upgraded with Material 3 Expressive shape morphing and bouncy spring animations.
  */
 @Composable
 fun WeeklyShieldStatsCard(
@@ -103,11 +103,17 @@ fun WeeklyShieldStatsCard(
     }
     val selectedDay: DailyShieldStats? = summary.days.getOrNull(activeIndex)
 
+    val outerCorner by animateDpAsState(
+        targetValue = if (isBreakdownExpanded) 32.dp else 24.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "weekly_card_corner"
+    )
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .testTag("weekly_stats_card"),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(outerCorner),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
         Column(
@@ -127,7 +133,7 @@ fun WeeklyShieldStatsCard(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier.size(44.dp)
                     ) {
@@ -144,7 +150,7 @@ fun WeeklyShieldStatsCard(
                         Text(
                             text = "Weekly Shield Telemetry",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
@@ -180,16 +186,32 @@ fun WeeklyShieldStatsCard(
                 }
             }
 
-            // Filter Chips (All, Notifications, Calls)
+            // Expressive Morphing Filter Chips (All, Notifications, Calls)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                val allCorner by animateDpAsState(
+                    targetValue = if (selectedMetricFilter == ChartMetricFilter.ALL) 24.dp else 12.dp,
+                    animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                    label = "chip_all_corner"
+                )
+                val notifsCorner by animateDpAsState(
+                    targetValue = if (selectedMetricFilter == ChartMetricFilter.NOTIFICATIONS) 24.dp else 12.dp,
+                    animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                    label = "chip_notifs_corner"
+                )
+                val callsCorner by animateDpAsState(
+                    targetValue = if (selectedMetricFilter == ChartMetricFilter.CALLS) 24.dp else 12.dp,
+                    animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                    label = "chip_calls_corner"
+                )
+
                 FilterChip(
                     selected = selectedMetricFilter == ChartMetricFilter.ALL,
                     onClick = { selectedMetricFilter = ChartMetricFilter.ALL },
                     label = { Text("Combined", style = MaterialTheme.typography.labelMedium) },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(allCorner),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -202,7 +224,7 @@ fun WeeklyShieldStatsCard(
                     selected = selectedMetricFilter == ChartMetricFilter.NOTIFICATIONS,
                     onClick = { selectedMetricFilter = ChartMetricFilter.NOTIFICATIONS },
                     label = { Text("Alerts", style = MaterialTheme.typography.labelMedium) },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(notifsCorner),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -215,7 +237,7 @@ fun WeeklyShieldStatsCard(
                     selected = selectedMetricFilter == ChartMetricFilter.CALLS,
                     onClick = { selectedMetricFilter = ChartMetricFilter.CALLS },
                     label = { Text("Calls", style = MaterialTheme.typography.labelMedium) },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(callsCorner),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer
@@ -237,6 +259,7 @@ fun WeeklyShieldStatsCard(
                     subtitle = "Avg ${String.format("%.1f", summary.averageSilencedPerDay)} / day",
                     icon = Icons.Filled.NotificationsOff,
                     accentColor = MaterialTheme.colorScheme.primary,
+                    isHighlighted = selectedMetricFilter == ChartMetricFilter.NOTIFICATIONS,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -246,6 +269,7 @@ fun WeeklyShieldStatsCard(
                     subtitle = "Avg ${String.format("%.1f", summary.averageCallsPerDay)} / day",
                     icon = Icons.Filled.PhoneDisabled,
                     accentColor = MaterialTheme.colorScheme.tertiary,
+                    isHighlighted = selectedMetricFilter == ChartMetricFilter.CALLS,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -261,7 +285,7 @@ fun WeeklyShieldStatsCard(
 
             // Dual-Bar + Trend Curve Chart Canvas & Layout
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -299,7 +323,7 @@ fun WeeklyShieldStatsCard(
                             stateManager.incrementShieldedNotification()
                             selectedDayIndex = (summary.days.size - 1).coerceAtLeast(0)
                         },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = CircleShape,
                         modifier = Modifier
                             .weight(1f)
                             .testTag("simulate_silenced_notif_btn")
@@ -322,7 +346,7 @@ fun WeeklyShieldStatsCard(
                             stateManager.incrementShieldedCall()
                             selectedDayIndex = (summary.days.size - 1).coerceAtLeast(0)
                         },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = CircleShape,
                         modifier = Modifier
                             .weight(1f)
                             .testTag("simulate_declined_call_btn")
@@ -418,11 +442,11 @@ private fun RechartsTooltipPill(
 ) {
     Surface(
         modifier = modifier.testTag("chart_tooltip"),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            1.2.dp,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
         )
     ) {
         Row(
@@ -653,7 +677,7 @@ private fun RechartsDualBarChart(
                     val animatedNotifHeight by animateFloatAsState(
                         targetValue = if (filter == ChartMetricFilter.CALLS) 0f else notifRatio,
                         animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            dampingRatio = Spring.DampingRatioLowBouncy,
                             stiffness = Spring.StiffnessLow
                         ),
                         label = "notif_bar_height"
@@ -662,19 +686,25 @@ private fun RechartsDualBarChart(
                     val animatedCallHeight by animateFloatAsState(
                         targetValue = if (filter == ChartMetricFilter.NOTIFICATIONS) 0f else callsRatio,
                         animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            dampingRatio = Spring.DampingRatioLowBouncy,
                             stiffness = Spring.StiffnessLow
                         ),
                         label = "call_bar_height"
+                    )
+
+                    val dayColCorner by animateDpAsState(
+                        targetValue = if (isSelected) 16.dp else 10.dp,
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "day_col_corner_$index"
                     )
 
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(dayColCorner))
                             .background(
-                                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
                                 else Color.Transparent
                             )
                             .clickable { onDaySelected(index) }
@@ -699,7 +729,7 @@ private fun RechartsDualBarChart(
                                         modifier = Modifier
                                             .width(if (filter == ChartMetricFilter.ALL) 11.dp else 18.dp)
                                             .fillMaxHeight(animatedNotifHeight)
-                                            .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
                                             .background(
                                                 Brush.verticalGradient(
                                                     colors = listOf(
@@ -717,7 +747,7 @@ private fun RechartsDualBarChart(
                                         modifier = Modifier
                                             .width(if (filter == ChartMetricFilter.ALL) 11.dp else 18.dp)
                                             .fillMaxHeight(animatedCallHeight)
-                                            .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
                                             .background(
                                                 Brush.verticalGradient(
                                                     colors = listOf(
@@ -735,7 +765,7 @@ private fun RechartsDualBarChart(
 
                         // X-Axis Day Label
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = CircleShape,
                             color = when {
                                 isSelected -> MaterialTheme.colorScheme.primary
                                 day.isToday -> MaterialTheme.colorScheme.primaryContainer
@@ -754,7 +784,7 @@ private fun RechartsDualBarChart(
                                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                                 },
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -771,11 +801,20 @@ private fun KpiMetricCard(
     subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     accentColor: Color,
+    isHighlighted: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val cardCorner by animateDpAsState(
+        targetValue = if (isHighlighted) 26.dp else 18.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "kpi_corner_$title"
+    )
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(cardCorner),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = if (isHighlighted) {
+            androidx.compose.foundation.BorderStroke(1.5.dp, accentColor.copy(alpha = 0.6f))
+        } else null,
         modifier = modifier
     ) {
         Column(
@@ -802,7 +841,7 @@ private fun KpiMetricCard(
             Text(
                 text = value,
                 style = MaterialTheme.typography.headlineMedium.copy(fontFamily = JetBrainsMonoFontFamily),
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
 
@@ -878,8 +917,14 @@ private fun DailyBreakdownRow(
     onClick: () -> Unit
 ) {
     val progress = ((day.silencedNotifications + day.declinedCalls).toFloat() / maxTotal).coerceIn(0.05f, 1f)
+    val rowCorner by animateDpAsState(
+        targetValue = if (isSelected) 20.dp else 14.dp,
+        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+        label = "breakdown_row_corner_${day.dayShort}"
+    )
+
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(rowCorner),
         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier
             .fillMaxWidth()
