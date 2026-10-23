@@ -5,9 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
@@ -50,12 +52,31 @@ class ZenShieldForegroundService : Service() {
     private var observerJob: Job? = null
     private var tickerJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var systemTickReceiverRegistered = false
+
+    private val systemTickReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val stateManager = FocusStateManager.getInstance(applicationContext)
+            if (stateManager.checkAndExpireIfNeeded()) {
+                stopForegroundService()
+                return
+            }
+            stateManager.evaluateWorkSchedule()
+            val currentState = stateManager.state.value
+            if (currentState.activeProfile == FocusProfile.OFF) {
+                stopForegroundService()
+            } else {
+                publishNotificationUpdate(currentState, stateManager.weeklyStatsFlow.value)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "ZenShieldForegroundService initialized")
         createNotificationChannel()
         acquireTemporaryWakeLock()
+        registerSystemTickReceiver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -132,10 +153,18 @@ class ZenShieldForegroundService : Service() {
      * 1. Timed sessions expire cleanly on the exact second at 00:00 (never counting negative) and update the progress bar.
      * 2. Game exit 30-second countdown updates live in the notification shade.
      */
+    /**
+     * Runs a lightweight background monitor while Focus is active so:
+     * 1. Timed sessions expire cleanly on the exact second at 00:00 (never counting negative).
+     * 2. Game exit 15-second countdown updates live in the notification shade.
+     * 3. Progress bar refreshes periodically without triggering Android's background notify() rate limit,
+     *    while native SystemUI Chronometer handles 1fps second-by-second countdown rendering.
+     */
     private fun startLiveNotificationTicker(stateManager: FocusStateManager) {
         if (tickerJob?.isActive == true) return
 
         tickerJob = serviceScope.launch {
+            var tickCounter = 0
             while (isActive) {
                 if (stateManager.checkAndExpireIfNeeded()) {
                     stopForegroundService()
@@ -159,8 +188,10 @@ class ZenShieldForegroundService : Service() {
                     }
                 }
 
-                // Push live progress bar / clamped countdown update when timed or during 30s game exit grace
-                if (expiryTime != null || state.gameExitCountdownSeconds != null) {
+                tickCounter++
+                // Update every second only during the 15s game-exit grace badge, or every 15s for the progress bar.
+                // Second-by-second timer digits are ticked natively by Android SystemUI Chronometer!
+                if (state.gameExitCountdownSeconds != null || (expiryTime != null && tickCounter % 15 == 0)) {
                     publishNotificationUpdate(state, stateManager.weeklyStatsFlow.value)
                 }
 
@@ -233,6 +264,7 @@ class ZenShieldForegroundService : Service() {
 
         val isTimed = expiryTime != null
         val remainingMs = if (expiryTime != null) maxOf(0L, expiryTime - now) else 0L
+        val countdownChronometerBase = SystemClock.elapsedRealtime() + remainingMs
         val clampedCountdownText = formatNonNegativeCountdown(remainingMs)
         val elapsedMs = maxOf(0L, now - (state.sessionStartTimeMillis ?: now))
         val elapsedChronometerBase = SystemClock.elapsedRealtime() - elapsedMs
@@ -240,7 +272,7 @@ class ZenShieldForegroundService : Service() {
         // Compute live progress percentage (0..100)
         val graceSeconds = state.gameExitCountdownSeconds
         val progressPercent = when {
-            graceSeconds != null -> ((graceSeconds / 30f) * 100f).toInt().coerceIn(3, 100)
+            graceSeconds != null -> ((graceSeconds / 15f) * 100f).toInt().coerceIn(3, 100)
             isTimed && expiryTime != null -> {
                 val startMillis = state.sessionStartTimeMillis ?: (expiryTime - 3600_000L)
                 val totalSpan = (expiryTime - startMillis).coerceAtLeast(60_000L)
@@ -287,10 +319,17 @@ class ZenShieldForegroundService : Service() {
             )
 
             if (isTimed) {
-                // Use explicit software-clamped TextView so countdown can never tick into negative numbers
-                setViewVisibility(R.id.chrono_timer, View.GONE)
-                setViewVisibility(R.id.tv_collapsed_duration, View.VISIBLE)
-                setTextViewText(R.id.tv_collapsed_duration, clampedCountdownText)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    // Use native OS Chronometer countdown so SystemUI ticks every second even in Doze/background
+                    setViewVisibility(R.id.tv_collapsed_duration, View.GONE)
+                    setViewVisibility(R.id.chrono_timer, View.VISIBLE)
+                    setChronometerCountDown(R.id.chrono_timer, true)
+                    setChronometer(R.id.chrono_timer, countdownChronometerBase, "%s left", true)
+                } else {
+                    setViewVisibility(R.id.chrono_timer, View.GONE)
+                    setViewVisibility(R.id.tv_collapsed_duration, View.VISIBLE)
+                    setTextViewText(R.id.tv_collapsed_duration, clampedCountdownText)
+                }
             } else {
                 setViewVisibility(R.id.tv_collapsed_duration, View.GONE)
                 setViewVisibility(R.id.chrono_timer, View.VISIBLE)
@@ -332,10 +371,17 @@ class ZenShieldForegroundService : Service() {
             }
 
             if (isTimed) {
-                // Software-clamped countdown text prevents any negative Chronometer display
-                setViewVisibility(R.id.chrono_expanded, View.GONE)
-                setViewVisibility(R.id.tv_expanded_duration, View.VISIBLE)
-                setTextViewText(R.id.tv_expanded_duration, clampedCountdownText)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    // Use native OS Chronometer countdown so SystemUI ticks every second without freezing
+                    setViewVisibility(R.id.tv_expanded_duration, View.GONE)
+                    setViewVisibility(R.id.chrono_expanded, View.VISIBLE)
+                    setChronometerCountDown(R.id.chrono_expanded, true)
+                    setChronometer(R.id.chrono_expanded, countdownChronometerBase, "%s left", true)
+                } else {
+                    setViewVisibility(R.id.chrono_expanded, View.GONE)
+                    setViewVisibility(R.id.tv_expanded_duration, View.VISIBLE)
+                    setTextViewText(R.id.tv_expanded_duration, clampedCountdownText)
+                }
             } else {
                 setViewVisibility(R.id.tv_expanded_duration, View.GONE)
                 setViewVisibility(R.id.chrono_expanded, View.VISIBLE)
@@ -372,8 +418,12 @@ class ZenShieldForegroundService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
-        if (isTimed) {
-            builder.setUsesChronometer(false)
+        if (isTimed && expiryTime != null) {
+            builder.setWhen(expiryTime)
+            builder.setUsesChronometer(true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                builder.setChronometerCountDown(true)
+            }
             if (remainingMs > 0L) {
                 builder.setTimeoutAfter(remainingMs)
             }
@@ -440,11 +490,43 @@ class ZenShieldForegroundService : Service() {
         }
     }
 
+    private fun registerSystemTickReceiver() {
+        if (systemTickReceiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_TIME_TICK)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(systemTickReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(systemTickReceiver, filter)
+            }
+            systemTickReceiverRegistered = true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register systemTickReceiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterSystemTickReceiver() {
+        if (!systemTickReceiverRegistered) return
+        try {
+            unregisterReceiver(systemTickReceiver)
+        } catch (_: Exception) {
+        } finally {
+            systemTickReceiverRegistered = false
+        }
+    }
+
     private fun stopForegroundService() {
         tickerJob?.cancel()
         tickerJob = null
         observerJob?.cancel()
         observerJob = null
+        unregisterSystemTickReceiver()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -461,6 +543,7 @@ class ZenShieldForegroundService : Service() {
         tickerJob = null
         observerJob?.cancel()
         observerJob = null
+        unregisterSystemTickReceiver()
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
         }

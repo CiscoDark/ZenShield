@@ -163,6 +163,7 @@ import com.example.ui.GameDetectionCard
 import com.example.ui.GamingModeNonInteractiveOverlay
 import com.example.ui.GamingModePopupManager
 import com.example.ui.WeeklyShieldStatsCard
+import com.example.ui.WorkScheduleCard
 import com.example.ui.theme.ExpressiveHaptics
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.ExpressiveShapes
@@ -236,43 +237,13 @@ fun DynamicTheme(
     preferences: FocusThemePreferences = FocusThemePreferences(),
     content: @Composable () -> Unit
 ) {
-    val context = LocalContext.current
-
-    val dynamicColorScheme: ColorScheme? = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (!preferences.profileTintedAccent || activeProfile == FocusProfile.OFF)) {
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-    } else null
-
-    if (dynamicColorScheme != null) {
-        val finalColorScheme = if (darkTheme && preferences.amoledPureBlack) {
-            dynamicColorScheme.copy(
-                surface = Color.Black,
-                background = Color.Black,
-                surfaceContainerLowest = Color.Black,
-                surfaceContainerLow = Color(0xFF070A0F),
-                surfaceContainer = Color(0xFF0F141E),
-                surfaceContainerHigh = Color(0xFF171E2B),
-                surfaceContainerHighest = Color(0xFF1F2838),
-                surfaceDim = Color.Black
-            )
-        } else {
-            dynamicColorScheme
-        }
-
-        MaterialTheme(
-            colorScheme = finalColorScheme,
-            typography = Typography,
-            shapes = ExpressiveShapes,
-            content = content
-        )
-    } else {
-        com.example.ui.theme.DynamicTheme(
-            darkTheme = darkTheme,
-            dynamicColor = dynamicColor,
-            activeProfile = activeProfile,
-            preferences = preferences,
-            content = content
-        )
-    }
+    com.example.ui.theme.DynamicTheme(
+        darkTheme = darkTheme,
+        dynamicColor = dynamicColor,
+        activeProfile = activeProfile,
+        preferences = preferences,
+        content = content
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -310,6 +281,8 @@ fun ZenShieldDashboardScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                stateManager.checkAndExpireIfNeeded()
+                stateManager.evaluateWorkSchedule()
                 hasNotificationListener = checkNotificationListenerAccess(context)
                 hasDndAccess = stateManager.isNotificationPolicyAccessGranted()
                 hasRuntimePermissions = checkRuntimePermissions(context)
@@ -578,7 +551,13 @@ fun ZenShieldDashboardScreen(
                             grantedPermissionsCount = grantedPermissionsCount,
                             onRequestRuntimePermissions = {
                                 ExpressiveHaptics.playSpringTap(context)
-                                val perms = mutableListOf(Manifest.permission.READ_CONTACTS)
+                                val perms = mutableListOf(
+                                    Manifest.permission.READ_CONTACTS,
+                                    Manifest.permission.READ_PHONE_STATE
+                                )
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    perms.add(Manifest.permission.ANSWER_PHONE_CALLS)
+                                }
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                     perms.add(Manifest.permission.POST_NOTIFICATIONS)
                                 }
@@ -1031,7 +1010,7 @@ private fun ShieldCommandCenterTab(
         }
 
         // 3. 2x2 Bento Focus Profile Selector Grid + Off Status Chip
-        item {
+        item(key = "focus_profile_bento_section") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1075,8 +1054,50 @@ private fun ShieldCommandCenterTab(
             )
         }
 
-        // 3b. Live Notification Shade Controller & Gaming Pop-Up Preview Card
-        item {
+        // 3a. 2x2 Bento Quick-Toggle Grid for Instant Rule Control
+        item(key = "quick_rules_bento_section") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Quick Guard Controls",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.clickable { onOpenRulesTab() }
+                ) {
+                    Text(
+                        text = "All Rules →",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            QuickRulesBentoGrid(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 3b. Work Focus Mode & Automatic Work Hours Schedule Card
+        item(key = "work_schedule_card_section") {
+            WorkScheduleCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 3c. Live Notification Shade Controller & Gaming Pop-Up Preview Card
+        item(key = "live_hud_preview_section") {
             LiveNotificationHudPreviewCard(
                 state = state,
                 activeProfile = activeProfile,
@@ -1086,8 +1107,8 @@ private fun ShieldCommandCenterTab(
             )
         }
 
-        // 3c. Live Blocked Activity Feed & One-Tap Shield Intercept Simulator
-        item {
+        // 3d. Live Blocked Activity Feed & One-Tap Shield Intercept Simulator
+        item(key = "live_intercepts_feed_section") {
             LiveInterceptsActivityFeedCard(
                 state = state,
                 stateManager = stateManager
@@ -1572,7 +1593,7 @@ fun LiveNotificationHudPreviewCard(
 
     val progressFraction = when {
         !isActive -> 0f
-        state.gameExitCountdownSeconds != null -> (state.gameExitCountdownSeconds / 30f).coerceIn(0.05f, 1f)
+        state.gameExitCountdownSeconds != null -> (state.gameExitCountdownSeconds / 15f).coerceIn(0.05f, 1f)
         isTimed && state.expiresAtMillis != null -> {
             val startMs = state.sessionStartTimeMillis ?: (state.expiresAtMillis - 3600_000L)
             val totalSpan = maxOf(60_000L, state.expiresAtMillis - startMs).toFloat()
@@ -2114,7 +2135,15 @@ private fun RulesAndBouncerTab(
             )
         }
 
-        // 2. Real-Time Game Launch Detector & 30s Exit Grace Countdown
+        // 1b. Work Focus Mode (Manual & Automatic Schedule)
+        item {
+            WorkScheduleCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 2. Real-Time Game Launch Detector & 15s Exit Grace Countdown
         item {
             GameDetectionCard(
                 state = state,
@@ -2124,12 +2153,20 @@ private fun RulesAndBouncerTab(
         }
 
         // 3. Active Call & VoIP Bouncer
-        item {
+        item(key = "rules_call_bouncer") {
+            val activeCallGuards = listOf(
+                state.networkLevelCallRejection,
+                state.autoDeclineVoipCalls,
+                state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
+                state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
+                state.declineAllCallsRegardless
+            ).count { it }
             ExpandableConfigCard(
                 title = "Active Call & VoIP Bouncer",
                 subtitle = "Network-level rejection & 3-minute repeat breakthrough",
                 icon = Icons.Rounded.Phone,
-                initiallyExpanded = true
+                initiallyExpanded = true,
+                badgeText = if (state.declineAllCallsRegardless) "ALL BLOCKED" else "$activeCallGuards ACTIVE"
             ) {
                 ConfigSwitchRow(
                     title = "Decline All Calls Regardless of Condition",
@@ -2188,17 +2225,24 @@ private fun RulesAndBouncerTab(
             }
         }
 
-        // 4. Gaming Mode Lockdown
-        item {
+        // 4. Gaming Mode Lockdown (Collapsible Detail Card)
+        item(key = "rules_gaming_lockdown") {
+            val activeGameRules = listOf(
+                state.autoGameDetectionEnabled,
+                state.autoDeclineVoipInGame,
+                state.strictGamingLockdownEnabled,
+                state.suppressHeadsUpBanners
+            ).count { it }
             ExpandableConfigCard(
                 title = "Gaming Mode Lockdown",
                 subtitle = "Zero latency, zero popups, uninterrupted gaming",
                 icon = Icons.Rounded.SportsEsports,
-                initiallyExpanded = true
+                initiallyExpanded = false,
+                badgeText = "$activeGameRules/4 ON"
             ) {
                 ConfigSwitchRow(
                     title = "Auto-Activate Game Mode DND on Game Launch",
-                    subtitle = "Automatically transitions to Gaming DND whenever any game launches, and restores previous profile 30s after exit",
+                    subtitle = "Automatically transitions to Gaming DND whenever any game launches, and exits Gaming Mode 15s after leaving the game",
                     checked = state.autoGameDetectionEnabled,
                     onCheckedChange = {
                         ExpressiveHaptics.playSpringTap(context)
@@ -2242,13 +2286,18 @@ private fun RulesAndBouncerTab(
             }
         }
 
-        // 5. Smart Breakthrough & Emergency Scanner
-        item {
+        // 5. Smart Breakthrough & Emergency Scanner (Collapsible Detail Card)
+        item(key = "rules_smart_breakthrough") {
+            val activeAlertRules = listOf(
+                state.smartUrgentBreakthroughEnabled,
+                state.silenceNotifications
+            ).count { it }
             ExpandableConfigCard(
                 title = "Smart Breakthrough & Emergency Scanner",
                 subtitle = "Scans critical OTPs, ride drivers, and emergency text alerts",
                 icon = Icons.Rounded.Notifications,
-                initiallyExpanded = true
+                initiallyExpanded = false,
+                badgeText = "$activeAlertRules/2 ON"
             ) {
                 ConfigSwitchRow(
                     title = "OTP, Ride & 'URGENT' Keyword Breakthrough",
@@ -2259,6 +2308,21 @@ private fun RulesAndBouncerTab(
                         stateManager.setSmartUrgentBreakthroughEnabled(it)
                     },
                     testTag = "switch_smart_urgent"
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ConfigSwitchRow(
+                    title = "Silence Regular Non-Urgent Notifications",
+                    subtitle = "Dismisses standard app banners and chat pings during active Focus while preserving your custom rule toggles across profile switches",
+                    checked = state.silenceNotifications,
+                    onCheckedChange = { checked ->
+                        ExpressiveHaptics.playSpringTap(context)
+                        stateManager.updateProfileSettings(
+                            state.allowStarredContactsOnly,
+                            state.blockRepeatedCallers,
+                            checked
+                        )
+                    },
+                    testTag = "switch_silence_regular_notifications"
                 )
             }
         }
@@ -2327,8 +2391,8 @@ private fun SystemAndThemeTab(
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ConfigSwitchRow(
-                    title = "Dim Lock Screen During Sleep/DND",
-                    subtitle = "Generates minimalist dark slate status wallpaper on lock screen",
+                    title = "Minimalist OLED Focus Lock Screen",
+                    subtitle = "Applies custom pitch-black vector artwork per active profile (DND, GAME, WORK, SLEEP) & restores default wallpaper when OFF",
                     checked = state.dimLockScreenEnabled,
                     onCheckedChange = {
                         ExpressiveHaptics.playSpringTap(context)
@@ -2380,7 +2444,7 @@ private fun SystemAndThemeTab(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 PermissionStatusRow(
                     title = "Runtime Permissions",
-                    description = "Starred contacts lookup and push notifications",
+                    description = "Starred contacts lookup, cellular call termination, and push notifications",
                     isGranted = hasRuntimePermissions,
                     actionLabel = "Grant",
                     onAction = onRequestRuntimePermissions
@@ -2917,8 +2981,8 @@ fun FocusProfileBentoGrid(
 ) {
     val profiles = listOf(
         Triple(FocusProfile.DO_NOT_DISTURB, Icons.Rounded.DoNotDisturbOn, "Silences notifications & declines calls"),
-        Triple(FocusProfile.GAMING, Icons.Rounded.SportsEsports, "Zero popups, VoIP bouncer & 30s exit grace"),
-        Triple(FocusProfile.WORK, Icons.Rounded.Work, "Deep focus with starred contact priority"),
+        Triple(FocusProfile.GAMING, Icons.Rounded.SportsEsports, "Zero popups, VoIP bouncer & 15s exit grace"),
+        Triple(FocusProfile.WORK, Icons.Rounded.Work, "Manual or scheduled focus with custom rules"),
         Triple(FocusProfile.SLEEP, Icons.Rounded.Bedtime, "Restful night shield with lock screen dim")
     )
 
@@ -3051,6 +3115,216 @@ fun FocusProfileBentoGrid(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class QuickRuleTileData(
+    val title: String,
+    val statusText: String,
+    val icon: ImageVector,
+    val isEnabled: Boolean,
+    val testTag: String,
+    val onToggle: () -> Unit
+)
+
+/**
+ * QuickRulesBentoGrid
+ *
+ * Compact 2x2 Material 3 Expressive Bento Grid on the Command Center providing 1-tap toggle access
+ * to the 4 most-used protection rules: Decline All Calls, Call Auto-Reply, Auto-Game DND, and Starred VIP Bypass.
+ */
+@Composable
+fun QuickRulesBentoGrid(
+    state: FocusSessionState,
+    stateManager: FocusStateManager,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val vipEffective = state.allowStarredContactsOnly && !state.declineAllCallsRegardless
+
+    val tiles = listOf(
+        QuickRuleTileData(
+            title = "Decline All Calls",
+            statusText = if (state.declineAllCallsRegardless) "ON • Zero-Tolerance" else "OFF • Filtered",
+            icon = Icons.Rounded.Phone,
+            isEnabled = state.declineAllCallsRegardless,
+            testTag = "bento_quick_decline_all",
+            onToggle = {
+                ExpressiveHaptics.playSpringTap(context)
+                stateManager.setDeclineAllCallsRegardless(!state.declineAllCallsRegardless)
+            }
+        ),
+        QuickRuleTileData(
+            title = "Call Auto-Reply",
+            statusText = if (state.autoReplyEnabled) "ON • 3m Cooldown" else "OFF • Silent",
+            icon = Icons.Rounded.PhoneCallback,
+            isEnabled = state.autoReplyEnabled,
+            testTag = "bento_quick_auto_reply",
+            onToggle = {
+                ExpressiveHaptics.playSpringTap(context)
+                stateManager.toggleAutoReply()
+            }
+        ),
+        QuickRuleTileData(
+            title = "Auto-Game DND",
+            statusText = if (state.autoGameDetectionEnabled) "ON • 15s Exit Grace" else "OFF • Manual Only",
+            icon = Icons.Rounded.SportsEsports,
+            isEnabled = state.autoGameDetectionEnabled,
+            testTag = "bento_quick_auto_game",
+            onToggle = {
+                ExpressiveHaptics.playSpringTap(context)
+                stateManager.setAutoGameDetectionEnabled(!state.autoGameDetectionEnabled)
+            }
+        ),
+        QuickRuleTileData(
+            title = "Starred VIP Bypass",
+            statusText = when {
+                state.declineAllCallsRegardless -> "Overridden by All-Block"
+                vipEffective -> "ON • VIPs Ring"
+                else -> "OFF • Blocked"
+            },
+            icon = Icons.Rounded.Security,
+            isEnabled = vipEffective,
+            testTag = "bento_quick_starred_vip",
+            onToggle = {
+                ExpressiveHaptics.playSpringTap(context)
+                if (state.declineAllCallsRegardless) {
+                    stateManager.setDeclineAllCallsRegardless(false)
+                    stateManager.updateProfileSettings(true, state.blockRepeatedCallers, state.silenceNotifications)
+                } else {
+                    stateManager.updateProfileSettings(
+                        !state.allowStarredContactsOnly,
+                        state.blockRepeatedCallers,
+                        state.silenceNotifications
+                    )
+                }
+            }
+        )
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("quick_rules_bento_grid"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        tiles.chunked(2).forEach { rowTiles ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                rowTiles.forEach { tile ->
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+
+                    val corner by animateDpAsState(
+                        targetValue = when {
+                            isPressed -> 12.dp
+                            tile.isEnabled -> 26.dp
+                            else -> 18.dp
+                        },
+                        animationSpec = ExpressiveMotion.bouncySpatialSpring(),
+                        label = "quick_rule_corner_${tile.testTag}"
+                    )
+                    val scale by animateFloatAsState(
+                        targetValue = if (isPressed) 0.94f else 1f,
+                        animationSpec = ExpressiveMotion.snappySpatialSpring(),
+                        label = "quick_rule_scale_${tile.testTag}"
+                    )
+                    val bgColor by animateColorAsState(
+                        targetValue = if (tile.isEnabled) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainer
+                        },
+                        animationSpec = ExpressiveMotion.smoothColorSpring(),
+                        label = "quick_rule_bg_${tile.testTag}"
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(corner),
+                        color = bgColor,
+                        border = BorderStroke(
+                            width = if (tile.isEnabled) 1.5.dp else 1.dp,
+                            color = if (tile.isEnabled) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                            }
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                            .clip(RoundedCornerShape(corner))
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null
+                            ) { tile.onToggle() }
+                            .testTag(tile.testTag)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 13.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = if (tile.isEnabled) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = tile.icon,
+                                        contentDescription = null,
+                                        tint = if (tile.isEnabled) {
+                                            MaterialTheme.colorScheme.onPrimary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = tile.title,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (tile.isEnabled) {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = tile.statusText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (tile.isEnabled) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }

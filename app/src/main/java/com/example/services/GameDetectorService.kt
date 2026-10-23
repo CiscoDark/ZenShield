@@ -39,6 +39,7 @@ class GameDetectorService : Service() {
     private var detectionJob: Job? = null
     private val gameClassificationCache = ConcurrentHashMap<String, Boolean>()
     private var lastKnownForegroundPackage: String? = null
+    private var hasEnteredGameDuringSession: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -65,8 +66,14 @@ class GameDetectorService : Service() {
             Log.i(TAG, "Starting Game Detection background loop")
 
             while (isActive) {
-                if (!stateManager.isAutoGameDetectionEnabled()) {
-                    Log.d(TAG, "Auto game detection disabled in settings. Pausing loop.")
+                val currentProfile = stateManager.state.value.activeProfile
+                if (currentProfile != FocusProfile.GAMING) {
+                    hasEnteredGameDuringSession = false
+                }
+
+                // Run detection when Auto-Game Detection is enabled OR while Gaming Mode is active (for 15s exit grace)
+                if (!stateManager.isAutoGameDetectionEnabled() && currentProfile != FocusProfile.GAMING) {
+                    Log.d(TAG, "Auto game detection disabled and Gaming profile inactive. Pausing loop.")
                     delay(POLL_INTERVAL_MS * 2)
                     continue
                 }
@@ -92,18 +99,29 @@ class GameDetectorService : Service() {
                             isGamePackage(lastKnownForegroundPackage!!, stateManager)
 
                     if (isGameInForeground) {
+                        hasEnteredGameDuringSession = true
                         // Game is actively running in foreground: cancel any pending deactivation countdown
                         stateManager.cancelGameExitedDeactivation()
 
-                        if (stateManager.state.value.activeProfile != FocusProfile.GAMING) {
+                        if (stateManager.state.value.activeProfile != FocusProfile.GAMING &&
+                            stateManager.isAutoGameDetectionEnabled()
+                        ) {
                             Log.i(TAG, "Game detected in foreground: $lastKnownForegroundPackage. Triggering Gaming Profile.")
                             stateManager.handleGameLaunched(lastKnownForegroundPackage!!)
                         }
                     } else {
-                        // Game is NOT in foreground (exited, minimized to launcher, switched apps, or screen off)
+                        // Game is NOT in foreground
                         if (stateManager.state.value.activeProfile == FocusProfile.GAMING) {
-                            if (!stateManager.isGameExitedDeactivationScheduled()) {
-                                Log.i(TAG, "Game exited or minimized (current: $lastKnownForegroundPackage, screenInteractive: $isScreenInteractive). Scheduling 30s auto-deactivation.")
+                            // If the user just manually enabled Gaming Mode inside Sentinel and is still in Sentinel,
+                            // do not start the 15s exit countdown until they launch a game or leave Sentinel.
+                            val isStillInsideSentinelApp = isScreenInteractive &&
+                                !hasEnteredGameDuringSession &&
+                                (lastKnownForegroundPackage == null || lastKnownForegroundPackage == applicationContext.packageName)
+
+                            if (isStillInsideSentinelApp) {
+                                stateManager.cancelGameExitedDeactivation()
+                            } else if (!stateManager.isGameExitedDeactivationScheduled()) {
+                                Log.i(TAG, "Game exited or minimized (current: $lastKnownForegroundPackage, screenInteractive: $isScreenInteractive). Scheduling 15s auto-deactivation.")
                                 stateManager.scheduleGameExitedDeactivation(FocusStateManager.GAME_EXIT_DEACTIVATION_DELAY_MS)
                             }
                         } else {
@@ -120,6 +138,10 @@ class GameDetectorService : Service() {
     }
 
     private fun isGamePackage(pkg: String, stateManager: FocusStateManager): Boolean {
+        if (pkg == applicationContext.packageName || TRANSIENT_SYSTEM_PACKAGES.contains(pkg)) {
+            return false
+        }
+
         // 1. Check custom games set by user
         if (stateManager.getCustomGamePackages().contains(pkg)) {
             return true
@@ -163,11 +185,32 @@ class GameDetectorService : Service() {
         while (usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event)
             if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                lastForegroundPackage = event.packageName
+                val pkg = event.packageName
+                // Ignore transient system overlays (notification shade, volume HUD, permission dialogs)
+                if (!pkg.isNullOrBlank() && !TRANSIENT_SYSTEM_PACKAGES.contains(pkg)) {
+                    lastForegroundPackage = pkg
+                }
             }
         }
 
-        return lastForegroundPackage
+        if (lastForegroundPackage != null) {
+            return lastForegroundPackage
+        }
+
+        // Fallback for uninterrupted sessions longer than 5 minutes without a new ACTIVITY_RESUMED event
+        return try {
+            val stats = usageStatsManager.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY,
+                now - 3_600_000L,
+                now
+            )
+            stats?.asSequence()
+                ?.filter { !it.packageName.isNullOrBlank() && !TRANSIENT_SYSTEM_PACKAGES.contains(it.packageName) }
+                ?.maxByOrNull { it.lastTimeUsed }
+                ?.packageName
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun stopDetectionLoop() {
@@ -186,8 +229,16 @@ class GameDetectorService : Service() {
     companion object {
         private const val TAG = "GameDetectorService"
         private const val POLL_INTERVAL_MS = 1000L
-        private const val LOOKBACK_WINDOW_MS = 30_000L
+        private const val LOOKBACK_WINDOW_MS = 300_000L // 5-minute event lookback window
         const val ACTION_STOP_DETECTION = "com.example.zenshield.ACTION_STOP_GAME_DETECTION"
+
+        private val TRANSIENT_SYSTEM_PACKAGES = setOf(
+            "com.android.systemui",
+            "com.google.android.permissioncontroller",
+            "com.android.permissioncontroller",
+            "com.samsung.android.permissioncontroller",
+            "android"
+        )
 
         fun hasUsageStatsPermission(context: Context): Boolean {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager

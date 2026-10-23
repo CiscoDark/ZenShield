@@ -6,7 +6,6 @@ import android.content.Intent
 import android.util.Log
 import com.example.core.FocusProfile
 import com.example.core.FocusStateManager
-import com.example.services.ZenShieldForegroundService
 
 class BootCompletedReceiver : BroadcastReceiver() {
 
@@ -15,27 +14,25 @@ class BootCompletedReceiver : BroadcastReceiver() {
         Log.i(TAG, "BootCompletedReceiver triggered with action: $action")
 
         val stateManager = FocusStateManager.getInstance(context)
-        val currentState = stateManager.state.value
-
-        // Check if session has expired or is still active
-        val isStillActive = currentState.activeProfile != FocusProfile.OFF &&
-                (currentState.expiresAtMillis == null || currentState.expiresAtMillis > System.currentTimeMillis())
-
-        if (isStillActive) {
-            Log.d(TAG, "Restoring active profile '${currentState.activeProfile.displayName}' after reboot")
-
-            // Re-apply interruption filter & dim lock screen
-            stateManager.setProfile(currentState.activeProfile, currentState.durationOption)
-
-            // Start live focus controller foreground service
-            ZenShieldForegroundService.start(context)
-        } else {
-            Log.d(TAG, "Focus profile is OFF or expired. No restoration required.")
-            stateManager.setProfile(FocusProfile.OFF)
+        when (action) {
+            ACTION_EXPIRE_FOCUS_SESSION -> {
+                stateManager.checkAndExpireIfNeeded()
+                stateManager.evaluateWorkSchedule()
+            }
+            ACTION_EVALUATE_WORK_SCHEDULE -> {
+                stateManager.checkAndExpireIfNeeded()
+                stateManager.evaluateWorkSchedule()
+                stateManager.scheduleNextWorkScheduleAlarm()
+            }
+            else -> {
+                stateManager.restoreAfterBootOrScheduleTick()
+            }
         }
 
-        // Restart Game Detection Service if auto game detection is enabled
-        if (currentState.autoGameDetectionEnabled) {
+        val currentState = stateManager.state.value
+
+        // Restart Game Detection Service if auto game detection is enabled or Gaming Mode is active
+        if (currentState.autoGameDetectionEnabled || currentState.activeProfile == FocusProfile.GAMING) {
             runCatching {
                 com.example.services.GameDetectorService.start(context)
             }
@@ -44,5 +41,8 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "BootCompletedReceiver"
+        const val ACTION_EXPIRE_FOCUS_SESSION = "com.example.zenshield.ACTION_EXPIRE_FOCUS_SESSION"
+        const val ACTION_EVALUATE_WORK_SCHEDULE = "com.example.zenshield.ACTION_EVALUATE_WORK_SCHEDULE"
     }
 }
+

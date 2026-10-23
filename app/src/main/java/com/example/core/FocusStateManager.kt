@@ -1,18 +1,23 @@
 package com.example.core
 
+import android.app.AlarmManager
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.WallpaperManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.receivers.BootCompletedReceiver
 import com.example.ui.theme.ExpressiveHaptics
 import com.example.ui.theme.FocusThemePreferences
 import kotlinx.coroutines.CoroutineScope
@@ -78,8 +83,25 @@ data class FocusSessionState(
     val sessionStartTimeMillis: Long? = null,
     val declineAllCallsRegardless: Boolean = false,
     val gameExitCountdownSeconds: Int? = null,
-    val recentIntercepts: List<InterceptEvent> = emptyList()
-)
+    val recentIntercepts: List<InterceptEvent> = emptyList(),
+    val workScheduleEnabled: Boolean = false,
+    val workScheduleStartHour: Int = 9,
+    val workScheduleStartMinute: Int = 0,
+    val workScheduleEndHour: Int = 17,
+    val workScheduleEndMinute: Int = 0,
+    val workScheduleDays: Set<Int> = DEFAULT_WORK_DAYS,
+    val isAutoTriggeredByWorkSchedule: Boolean = false
+) {
+    companion object {
+        val DEFAULT_WORK_DAYS: Set<Int> = setOf(
+            java.util.Calendar.MONDAY,
+            java.util.Calendar.TUESDAY,
+            java.util.Calendar.WEDNESDAY,
+            java.util.Calendar.THURSDAY,
+            java.util.Calendar.FRIDAY
+        )
+    }
+}
 
 data class DailyShieldStats(
     val dayKey: String,
@@ -107,6 +129,7 @@ class FocusStateManager private constructor(context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var expirationJob: Job? = null
     private var gameExitDeactivationJob: Job? = null
+    private var workScheduleWatcherJob: Job? = null
 
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<FocusSessionState> = _state.asStateFlow()
@@ -134,12 +157,15 @@ class FocusStateManager private constructor(context: Context) {
             startExpirationCountdown(current.expiresAtMillis)
         }
 
-        // Auto-activate Game Detection Service on startup if enabled
-        if (current.autoGameDetectionEnabled) {
+        // Auto-activate Game Detection Service on startup if enabled or if Gaming Mode is active
+        if (current.autoGameDetectionEnabled || current.activeProfile == FocusProfile.GAMING) {
             runCatching {
                 com.example.services.GameDetectorService.start(appContext)
             }
         }
+
+        // Start automated Work Focus schedule watcher
+        startWorkScheduleWatcher()
     }
 
     private fun loadInitialState(): FocusSessionState {
@@ -189,12 +215,23 @@ class FocusStateManager private constructor(context: Context) {
         val startTime = if (prefs.contains(KEY_SESSION_START)) prefs.getLong(KEY_SESSION_START, 0L).takeIf { it > 0 } else null
         val seedIntercepts = createSeedIntercepts()
 
+        val workSchedEnabled = prefs.getBoolean(KEY_WORK_SCHEDULE_ENABLED, false)
+        val workStartHour = prefs.getInt(KEY_WORK_START_HOUR, 9).coerceIn(0, 23)
+        val workStartMinute = prefs.getInt(KEY_WORK_START_MIN, 0).coerceIn(0, 59)
+        val workEndHour = prefs.getInt(KEY_WORK_END_HOUR, 17).coerceIn(0, 23)
+        val workEndMinute = prefs.getInt(KEY_WORK_END_MIN, 0).coerceIn(0, 59)
+        val workDaysRaw = prefs.getStringSet(KEY_WORK_SCHEDULE_DAYS, null)
+        val workDays = workDaysRaw?.mapNotNull { it.toIntOrNull() }?.toSet()
+            ?.takeIf { it.isNotEmpty() } ?: FocusSessionState.DEFAULT_WORK_DAYS
+        val isAutoWork = prefs.getBoolean(KEY_IS_AUTO_WORK_SCHEDULE, false)
+
         // If saved session already expired in the past, reset to OFF and clean persistent state
         if (profile != FocusProfile.OFF && expiresAt != null && System.currentTimeMillis() >= expiresAt) {
             prefs.edit()
                 .putString(KEY_ACTIVE_PROFILE, FocusProfile.OFF.id)
                 .remove(KEY_EXPIRES_AT)
                 .remove(KEY_SESSION_START)
+                .putBoolean(KEY_IS_AUTO_WORK_SCHEDULE, false)
                 .commit()
             return FocusSessionState(
                 activeProfile = FocusProfile.OFF,
@@ -202,11 +239,11 @@ class FocusStateManager private constructor(context: Context) {
                 durationOption = DurationOption.UNTIL_TURNED_OFF,
                 customDurationMinutes = customDurationMins,
                 dimLockScreenEnabled = dimLockScreen,
-                allowStarredContactsOnly = profile.defaultAllowStarredOnly,
-                blockRepeatedCallers = profile.defaultBlockRepeatedCalls,
+                allowStarredContactsOnly = allowStarredOnly,
+                blockRepeatedCallers = blockRepeated,
                 strictGamingLockdownEnabled = strictGaming,
                 allowRepeatCallersEnabled = allowRepeat,
-                silenceNotifications = profile.defaultSilenceNotifications,
+                silenceNotifications = silenceNotifs,
                 autoReplyEnabled = autoReply,
                 autoReplyMessageTemplate = autoReplyTemplate,
                 perProfileAutoReplyMessages = perProfileMessages,
@@ -225,7 +262,14 @@ class FocusStateManager private constructor(context: Context) {
                 totalShieldedNotifications = shieldedNotifs,
                 sessionStartTimeMillis = null,
                 declineAllCallsRegardless = declineAllCalls,
-                recentIntercepts = seedIntercepts
+                recentIntercepts = seedIntercepts,
+                workScheduleEnabled = workSchedEnabled,
+                workScheduleStartHour = workStartHour,
+                workScheduleStartMinute = workStartMinute,
+                workScheduleEndHour = workEndHour,
+                workScheduleEndMinute = workEndMinute,
+                workScheduleDays = workDays,
+                isAutoTriggeredByWorkSchedule = false
             )
         }
 
@@ -258,7 +302,14 @@ class FocusStateManager private constructor(context: Context) {
             totalShieldedNotifications = shieldedNotifs,
             sessionStartTimeMillis = startTime,
             declineAllCallsRegardless = declineAllCalls,
-            recentIntercepts = seedIntercepts
+            recentIntercepts = seedIntercepts,
+            workScheduleEnabled = workSchedEnabled,
+            workScheduleStartHour = workStartHour,
+            workScheduleStartMinute = workStartMinute,
+            workScheduleEndHour = workEndHour,
+            workScheduleEndMinute = workEndMinute,
+            workScheduleDays = workDays,
+            isAutoTriggeredByWorkSchedule = isAutoWork
         )
     }
 
@@ -546,7 +597,7 @@ class FocusStateManager private constructor(context: Context) {
             delay(1000L)
             if (!isActive || _state.value.activeProfile != FocusProfile.GAMING) return@launch
             _state.value = _state.value.copy(gameExitCountdownSeconds = null)
-            Log.i(TAG, "30-second game exit grace period expired. Auto-deactivating Gaming mode.")
+            Log.i(TAG, "15-second game exit grace period expired. Auto-deactivating Gaming mode.")
             handleGameExited()
         }
     }
@@ -576,6 +627,7 @@ class FocusStateManager private constructor(context: Context) {
             activeProfile = FocusProfile.GAMING,
             previousProfileBeforeGame = prev,
             isAutoTriggeredByGame = true,
+            isAutoTriggeredByWorkSchedule = false,
             durationOption = DurationOption.UNTIL_TURNED_OFF,
             expiresAtMillis = null,
             sessionStartTimeMillis = System.currentTimeMillis(),
@@ -602,7 +654,11 @@ class FocusStateManager private constructor(context: Context) {
         val current = _state.value
         if (current.activeProfile != FocusProfile.GAMING) return
 
-        val targetProfile = current.previousProfileBeforeGame
+        val targetProfile = if (current.isAutoTriggeredByGame) {
+            current.previousProfileBeforeGame
+        } else {
+            FocusProfile.OFF
+        }
         Log.i(TAG, "Game exited. Reverting focus profile from GAMING to ${targetProfile.displayName}")
         val updated = current.copy(
             activeProfile = targetProfile,
@@ -635,14 +691,27 @@ class FocusStateManager private constructor(context: Context) {
         return appContext.getSharedPreferences(VOIP_CACHE_PREFS_NAME, Context.MODE_PRIVATE)
     }
 
+    private fun normalizeCallerLookupKey(raw: String): String {
+        val trimmed = raw.trim().lowercase(Locale.ROOT)
+        val digitsOnly = trimmed.replace(Regex("[^0-9]"), "")
+        // When a phone number is present (7+ digits), normalize to trailing 9 digits so +1/0 prefixes match
+        if (digitsOnly.length >= 7) {
+            return digitsOnly.takeLast(9)
+        }
+        return trimmed
+    }
+
     fun checkVoipRepeatBreakthrough(callerName: String): Boolean {
         if (callerName.isBlank()) return false
-        val norm = callerName.trim().lowercase()
-        if (norm == "unknown caller" || norm == "unknown" || norm.startsWith("com.")) {
+        val norm = callerName.trim().lowercase(Locale.ROOT)
+        if (norm == "unknown caller" || norm == "unknown" || norm == "whatsapp" ||
+            norm == "telegram" || norm == "incoming voice call" || norm == "incoming video call" ||
+            norm.startsWith("com.") || norm.startsWith("org.")
+        ) {
             return false
         }
         val cachePrefs = getVoipCacheSharedPreferences()
-        val key = "voip_repeat_$norm"
+        val key = "voip_repeat_${normalizeCallerLookupKey(norm)}"
         val lastTimestamp = cachePrefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
         val isWithinThreeMinutes = lastTimestamp > 0L && (now - lastTimestamp) <= THREE_MINUTES_MS
@@ -659,12 +728,14 @@ class FocusStateManager private constructor(context: Context) {
 
     fun checkCellularRepeatBreakthrough(callerIdentifier: String): Boolean {
         if (callerIdentifier.isBlank()) return false
-        val norm = callerIdentifier.trim().lowercase()
-        if (norm == "unknown caller" || norm == "unknown") {
+        val norm = callerIdentifier.trim().lowercase(Locale.ROOT)
+        if (norm == "unknown caller" || norm == "unknown" || norm == "incoming call" ||
+            norm.startsWith("com.")
+        ) {
             return false
         }
         val prefs = getCallSharedPreferences()
-        val normalized = callerIdentifier.replace(Regex("[^0-9+]"), "").ifBlank { norm }
+        val normalized = normalizeCallerLookupKey(callerIdentifier)
         val key = "last_call_timestamp_$normalized"
         val lastTimestamp = prefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
@@ -743,6 +814,13 @@ class FocusStateManager private constructor(context: Context) {
         }
 
         val now = System.currentTimeMillis()
+        // If user manually turns off or switches away from a scheduled WORK session, mark the current work window as manually overridden
+        if (_state.value.activeProfile == FocusProfile.WORK && profile != FocusProfile.WORK && _state.value.workScheduleEnabled) {
+            computeActiveWorkScheduleWindow(now)?.let { (windowStart, _) ->
+                prefs.edit().putLong(KEY_DISMISSED_WORK_WINDOW_START, windowStart).apply()
+            }
+        }
+
         val expiresAt = if (profile != FocusProfile.OFF) {
             duration.durationMinutes?.let { now + it * 60 * 1000L }
         } else {
@@ -755,20 +833,22 @@ class FocusStateManager private constructor(context: Context) {
 
         if (profile != FocusProfile.OFF && expiresAt != null) {
             startExpirationCountdown(expiresAt)
+        } else {
+            cancelExpirationAlarm()
         }
 
         // Clean repeat caller and auto-reply caches on every profile transition so testing or new sessions never block
         resetSessionCaches()
 
+        // Preserve user's custom Call Bouncer & Notification toggles across all profile switches
         val updated = _state.value.copy(
             activeProfile = profile,
             expiresAtMillis = expiresAt,
             durationOption = duration,
             sessionStartTimeMillis = if (profile != FocusProfile.OFF) now else null,
             isAutoTriggeredByGame = false,
-            allowStarredContactsOnly = profile.defaultAllowStarredOnly,
-            blockRepeatedCallers = profile.defaultBlockRepeatedCalls,
-            silenceNotifications = profile.defaultSilenceNotifications
+            previousProfileBeforeGame = FocusProfile.OFF,
+            isAutoTriggeredByWorkSchedule = false
         )
 
         _state.value = updated
@@ -791,6 +871,9 @@ class FocusStateManager private constructor(context: Context) {
         // Sync Bulletproof Watchdog & Live Focus Controller Foreground Service
         if (profile != FocusProfile.OFF) {
             if (profile == FocusProfile.GAMING) {
+                runCatching {
+                    com.example.services.GameDetectorService.start(appContext)
+                }
                 runCatching {
                     com.example.ui.GamingModePopupManager.showGamingModeActivatedPopup(appContext, "Focus Shield")
                 }
@@ -860,11 +943,12 @@ class FocusStateManager private constructor(context: Context) {
             FocusProfile.OFF -> FocusProfile.DO_NOT_DISTURB
         }
 
+        // Preserve user's custom Call Bouncer & Notification toggles across all profile switches
         val updated = current.copy(
             activeProfile = nextProfile,
-            allowStarredContactsOnly = nextProfile.defaultAllowStarredOnly,
-            blockRepeatedCallers = nextProfile.defaultBlockRepeatedCalls,
-            silenceNotifications = nextProfile.defaultSilenceNotifications
+            isAutoTriggeredByGame = false,
+            previousProfileBeforeGame = FocusProfile.OFF,
+            isAutoTriggeredByWorkSchedule = false
         )
         _state.value = updated
         _activeProfileFlow.value = nextProfile
@@ -875,12 +959,328 @@ class FocusStateManager private constructor(context: Context) {
 
         if (nextProfile == FocusProfile.GAMING) {
             runCatching {
+                com.example.services.GameDetectorService.start(appContext)
+            }
+            runCatching {
                 com.example.ui.GamingModePopupManager.showGamingModeActivatedPopup(appContext, "Quick Mode Cycle")
             }
         }
 
         runCatching {
             com.example.services.ZenShieldForegroundService.update(context)
+        }
+    }
+
+    // =========================================================================
+    // WORK FOCUS SCHEDULE ENGINE (MANUAL + AUTOMATED SCHEDULE)
+    // =========================================================================
+
+    fun setWorkScheduleEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(workScheduleEnabled = enabled)
+        _state.value = updated
+        prefs.edit()
+            .putBoolean(KEY_WORK_SCHEDULE_ENABLED, enabled)
+            .remove(KEY_DISMISSED_WORK_WINDOW_START)
+            .apply()
+
+        if (enabled) {
+            evaluateWorkSchedule()
+            scheduleNextWorkScheduleAlarm()
+        } else {
+            cancelWorkScheduleAlarm()
+            if (updated.isAutoTriggeredByWorkSchedule && updated.activeProfile == FocusProfile.WORK) {
+                setProfile(FocusProfile.OFF)
+            }
+        }
+    }
+
+    fun setWorkScheduleTime(startHour: Int, startMinute: Int, endHour: Int, endMinute: Int) {
+        val sh = startHour.coerceIn(0, 23)
+        val sm = startMinute.coerceIn(0, 59)
+        val eh = endHour.coerceIn(0, 23)
+        val em = endMinute.coerceIn(0, 59)
+        val updated = _state.value.copy(
+            workScheduleStartHour = sh,
+            workScheduleStartMinute = sm,
+            workScheduleEndHour = eh,
+            workScheduleEndMinute = em
+        )
+        _state.value = updated
+        prefs.edit()
+            .putInt(KEY_WORK_START_HOUR, sh)
+            .putInt(KEY_WORK_START_MIN, sm)
+            .putInt(KEY_WORK_END_HOUR, eh)
+            .putInt(KEY_WORK_END_MIN, em)
+            .remove(KEY_DISMISSED_WORK_WINDOW_START)
+            .apply()
+
+        if (updated.workScheduleEnabled) {
+            evaluateWorkSchedule()
+            scheduleNextWorkScheduleAlarm()
+        }
+    }
+
+    fun toggleWorkScheduleDay(calendarDayOfWeek: Int) {
+        val currentDays = _state.value.workScheduleDays
+        val nextDays = if (currentDays.contains(calendarDayOfWeek)) {
+            if (currentDays.size > 1) currentDays - calendarDayOfWeek else currentDays
+        } else {
+            currentDays + calendarDayOfWeek
+        }
+        setWorkScheduleDays(nextDays)
+    }
+
+    fun setWorkScheduleDays(days: Set<Int>) {
+        if (days.isEmpty()) return
+        val updated = _state.value.copy(workScheduleDays = days)
+        _state.value = updated
+        prefs.edit()
+            .putStringSet(KEY_WORK_SCHEDULE_DAYS, days.map { it.toString() }.toSet())
+            .remove(KEY_DISMISSED_WORK_WINDOW_START)
+            .apply()
+
+        if (updated.workScheduleEnabled) {
+            evaluateWorkSchedule()
+            scheduleNextWorkScheduleAlarm()
+        }
+    }
+
+    /**
+     * Computes the active `[windowStartMillis, windowEndMillis)` if `nowMillis` falls inside
+     * a scheduled Work Focus window (supporting both daytime e.g. 09:00-17:00 and overnight e.g. 22:00-06:00).
+     */
+    fun computeActiveWorkScheduleWindow(nowMillis: Long = System.currentTimeMillis()): Pair<Long, Long>? {
+        val s = _state.value
+        if (!s.workScheduleEnabled || s.workScheduleDays.isEmpty()) return null
+
+        val startTotalMins = s.workScheduleStartHour * 60 + s.workScheduleStartMinute
+        val endTotalMins = s.workScheduleEndHour * 60 + s.workScheduleEndMinute
+        if (startTotalMins == endTotalMins) return null
+
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
+        val currentDayOfWeek = nowCal.get(java.util.Calendar.DAY_OF_WEEK)
+        val currentMinsOfDay = nowCal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + nowCal.get(java.util.Calendar.MINUTE)
+
+        if (startTotalMins < endTotalMins) {
+            // Same-day schedule (e.g., 09:00 to 17:00)
+            if (s.workScheduleDays.contains(currentDayOfWeek) && currentMinsOfDay in startTotalMins until endTotalMins) {
+                val startCal = (nowCal.clone() as java.util.Calendar).apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleStartHour)
+                    set(java.util.Calendar.MINUTE, s.workScheduleStartMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val endCal = (nowCal.clone() as java.util.Calendar).apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleEndHour)
+                    set(java.util.Calendar.MINUTE, s.workScheduleEndMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                return startCal.timeInMillis to endCal.timeInMillis
+            }
+        } else {
+            // Overnight schedule (e.g., 22:00 to 06:00 next day)
+            if (currentMinsOfDay >= startTotalMins && s.workScheduleDays.contains(currentDayOfWeek)) {
+                val startCal = (nowCal.clone() as java.util.Calendar).apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleStartHour)
+                    set(java.util.Calendar.MINUTE, s.workScheduleStartMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val endCal = (nowCal.clone() as java.util.Calendar).apply {
+                    add(java.util.Calendar.DAY_OF_YEAR, 1)
+                    set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleEndHour)
+                    set(java.util.Calendar.MINUTE, s.workScheduleEndMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                return startCal.timeInMillis to endCal.timeInMillis
+            } else if (currentMinsOfDay < endTotalMins) {
+                val yesterdayCal = (nowCal.clone() as java.util.Calendar).apply {
+                    add(java.util.Calendar.DAY_OF_YEAR, -1)
+                }
+                val yesterdayDow = yesterdayCal.get(java.util.Calendar.DAY_OF_WEEK)
+                if (s.workScheduleDays.contains(yesterdayDow)) {
+                    val startCal = (yesterdayCal.clone() as java.util.Calendar).apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleStartHour)
+                        set(java.util.Calendar.MINUTE, s.workScheduleStartMinute)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    val endCal = (nowCal.clone() as java.util.Calendar).apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleEndHour)
+                        set(java.util.Calendar.MINUTE, s.workScheduleEndMinute)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    return startCal.timeInMillis to endCal.timeInMillis
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Evaluates whether Work Focus should automatically activate or expire based on the user's schedule.
+     */
+    fun evaluateWorkSchedule(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val current = _state.value
+        if (!current.workScheduleEnabled) return false
+
+        val activeWindow = computeActiveWorkScheduleWindow(nowMillis)
+        if (activeWindow != null) {
+            val (windowStart, windowEnd) = activeWindow
+            val dismissedWindowStart = prefs.getLong(KEY_DISMISSED_WORK_WINDOW_START, -1L)
+            if (dismissedWindowStart == windowStart) {
+                // User manually dismissed this scheduled window; respect their override
+                return false
+            }
+
+            if (current.activeProfile == FocusProfile.OFF) {
+                Log.i(TAG, "Scheduled Work Focus window active ($windowStart..$windowEnd). Auto-engaging WORK Focus.")
+                expirationJob?.cancel()
+                startExpirationCountdown(windowEnd)
+                resetSessionCaches()
+
+                val updated = current.copy(
+                    activeProfile = FocusProfile.WORK,
+                    expiresAtMillis = windowEnd,
+                    durationOption = DurationOption.UNTIL_TURNED_OFF,
+                    sessionStartTimeMillis = nowMillis,
+                    isAutoTriggeredByWorkSchedule = true,
+                    isAutoTriggeredByGame = false
+                )
+                _state.value = updated
+                _activeProfileFlow.value = FocusProfile.WORK
+                persistState(updated)
+                syncInterruptionFilter(FocusProfile.WORK)
+                applyFocusLockScreen(appContext, FocusProfile.WORK, updated.dimLockScreenEnabled)
+                runCatching { com.example.services.ZenShieldForegroundService.start(appContext) }
+                runCatching { com.example.services.NotificationGuardService.ensureBound(appContext) }
+                return true
+            } else if (current.activeProfile == FocusProfile.WORK && current.isAutoTriggeredByWorkSchedule && current.expiresAtMillis != windowEnd) {
+                // Update end timestamp if user edited schedule end time while active
+                expirationJob?.cancel()
+                startExpirationCountdown(windowEnd)
+                val updated = current.copy(expiresAtMillis = windowEnd)
+                _state.value = updated
+                persistState(updated)
+                runCatching { com.example.services.ZenShieldForegroundService.update(appContext) }
+                return true
+            }
+        } else {
+            // Outside scheduled window: if currently in auto-triggered Work Focus, deactivate cleanly
+            if (current.activeProfile == FocusProfile.WORK && current.isAutoTriggeredByWorkSchedule) {
+                Log.i(TAG, "Scheduled Work Focus window ended. Deactivating WORK Focus.")
+                setProfile(FocusProfile.OFF)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun startWorkScheduleWatcher() {
+        workScheduleWatcherJob?.cancel()
+        scheduleNextWorkScheduleAlarm()
+        workScheduleWatcherJob = scope.launch {
+            while (isActive) {
+                try {
+                    checkAndExpireIfNeeded()
+                    evaluateWorkSchedule()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Work schedule watcher check failed: ${e.message}")
+                }
+                delay(15_000L)
+            }
+        }
+    }
+
+    /**
+     * Schedules an exact Doze-safe AlarmManager wakeup at the next Work Focus start or end boundary.
+     */
+    fun scheduleNextWorkScheduleAlarm(nowMillis: Long = System.currentTimeMillis()) {
+        val s = _state.value
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, BootCompletedReceiver::class.java).apply {
+            action = BootCompletedReceiver.ACTION_EVALUATE_WORK_SCHEDULE
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            REQUEST_CODE_WORK_SCHEDULE_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        if (!s.workScheduleEnabled || s.workScheduleDays.isEmpty()) {
+            runCatching { alarmManager.cancel(pendingIntent) }
+            return
+        }
+
+        val activeWindow = computeActiveWorkScheduleWindow(nowMillis)
+        val nextTriggerMillis: Long? = if (activeWindow != null) {
+            activeWindow.second
+        } else {
+            // Find next upcoming start time within the next 8 days
+            var earliestStart: Long? = null
+            for (dayOffset in 0..7) {
+                val cal = java.util.Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    add(java.util.Calendar.DAY_OF_YEAR, dayOffset)
+                    set(java.util.Calendar.HOUR_OF_DAY, s.workScheduleStartHour)
+                    set(java.util.Calendar.MINUTE, s.workScheduleStartMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val dow = cal.get(java.util.Calendar.DAY_OF_WEEK)
+                if (s.workScheduleDays.contains(dow) && cal.timeInMillis > nowMillis + 1000L) {
+                    earliestStart = cal.timeInMillis
+                    break
+                }
+            }
+            earliestStart
+        }
+
+        if (nextTriggerMillis != null) {
+            scheduleDozeSafeAlarm(alarmManager, nextTriggerMillis, pendingIntent)
+        }
+    }
+
+    private fun cancelWorkScheduleAlarm() {
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, BootCompletedReceiver::class.java).apply {
+            action = BootCompletedReceiver.ACTION_EVALUATE_WORK_SCHEDULE
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            REQUEST_CODE_WORK_SCHEDULE_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        runCatching { alarmManager.cancel(pendingIntent) }
+    }
+
+    /**
+     * Restores an active focus session or scheduled Work Focus on device reboot/update
+     * without resetting the remaining countdown timer.
+     */
+    fun restoreAfterBootOrScheduleTick() {
+        scheduleNextWorkScheduleAlarm()
+        if (checkAndExpireIfNeeded()) {
+            evaluateWorkSchedule()
+            return
+        }
+        if (evaluateWorkSchedule()) {
+            return
+        }
+        val current = _state.value
+        if (current.activeProfile != FocusProfile.OFF) {
+            if (current.expiresAtMillis != null) {
+                startExpirationCountdown(current.expiresAtMillis)
+            }
+            syncInterruptionFilter(current.activeProfile)
+            applyFocusLockScreen(appContext, current.activeProfile, current.dimLockScreenEnabled)
+            runCatching { com.example.services.ZenShieldForegroundService.start(appContext) }
+            runCatching { com.example.services.NotificationGuardService.ensureBound(appContext) }
         }
     }
 
@@ -1144,6 +1544,7 @@ class FocusStateManager private constructor(context: Context) {
 
     private fun startExpirationCountdown(targetMillis: Long) {
         expirationJob?.cancel()
+        scheduleExpirationAlarm(targetMillis)
         expirationJob = scope.launch {
             while (isActive) {
                 val remaining = targetMillis - System.currentTimeMillis()
@@ -1153,6 +1554,81 @@ class FocusStateManager private constructor(context: Context) {
                     break
                 }
                 delay(minOf(250L, remaining.coerceAtLeast(50L)))
+            }
+        }
+    }
+
+    private fun scheduleExpirationAlarm(targetMillis: Long) {
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, BootCompletedReceiver::class.java).apply {
+            action = BootCompletedReceiver.ACTION_EXPIRE_FOCUS_SESSION
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            REQUEST_CODE_EXPIRATION_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        scheduleDozeSafeAlarm(alarmManager, targetMillis, pendingIntent)
+    }
+
+    private fun cancelExpirationAlarm() {
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, BootCompletedReceiver::class.java).apply {
+            action = BootCompletedReceiver.ACTION_EXPIRE_FOCUS_SESSION
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            REQUEST_CODE_EXPIRATION_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        runCatching { alarmManager.cancel(pendingIntent) }
+    }
+
+    private fun scheduleDozeSafeAlarm(
+        alarmManager: AlarmManager,
+        triggerAtMillis: Long,
+        pendingIntent: PendingIntent
+    ) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAtMillis,
+                        pendingIntent
+                    )
+                } else {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAtMillis,
+                        pendingIntent
+                    )
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to schedule exact alarm: ${e.message}")
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAtMillis,
+                        pendingIntent
+                    )
+                }
             }
         }
     }
@@ -1168,6 +1644,28 @@ class FocusStateManager private constructor(context: Context) {
         }
 
         try {
+            if (profile != FocusProfile.OFF && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // Configure NotificationManager.Policy so incoming call notifications (including WhatsApp/VoIP)
+                // still generate their full Notification.Action PendingIntents for NotificationGuardService
+                // to intercept and decline, while suppressing visual popups/peeking.
+                val existingPolicy = runCatching { notificationManager.notificationPolicy }.getOrNull()
+                val priorityCategories = (existingPolicy?.priorityCategories ?: 0) or
+                    NotificationManager.Policy.PRIORITY_CATEGORY_CALLS or
+                    NotificationManager.Policy.PRIORITY_CATEGORY_REPEAT_CALLERS or
+                    NotificationManager.Policy.PRIORITY_CATEGORY_ALARMS
+                val suppressedEffects = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    NotificationManager.Policy.SUPPRESSED_EFFECT_PEEK
+                } else {
+                    0
+                }
+                val policy = NotificationManager.Policy(
+                    priorityCategories,
+                    NotificationManager.Policy.PRIORITY_SENDERS_ANY,
+                    existingPolicy?.priorityMessageSenders ?: NotificationManager.Policy.PRIORITY_SENDERS_STARRED,
+                    suppressedEffects
+                )
+                runCatching { notificationManager.notificationPolicy = policy }
+            }
             notificationManager.setInterruptionFilter(profile.interruptionFilter)
             Log.d(TAG, "Successfully synced interruption filter to ${profile.interruptionFilter}")
         } catch (e: SecurityException) {
@@ -1178,37 +1676,40 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     /**
-     * Applies a minimalist dark slate lockscreen bitmap when SLEEP or DO_NOT_DISTURB (or active focus profile)
-     * is active and dimLockScreen is enabled. Clears FLAG_LOCK when returning to OFF.
+     * Applies a profile-specific minimalist pitch-black (#000000) OLED lockscreen bitmap
+     * whenever any Focus profile (DO_NOT_DISTURB, GAMING, WORK, SLEEP) is active and
+     * dimLockScreenEnabled is true. Clears FLAG_LOCK to restore the user's wallpaper when OFF.
      */
     fun applyFocusLockScreen(context: Context, profile: FocusProfile, enabled: Boolean) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return
         }
 
+        val shouldDimLockScreen = enabled && profile != FocusProfile.OFF
+
         scope.launch(Dispatchers.IO) {
             try {
                 val wallpaperManager = WallpaperManager.getInstance(context)
 
-                if (profile == FocusProfile.OFF || !enabled) {
+                if (!shouldDimLockScreen) {
                     // Clear the lock screen override to restore default user wallpaper
                     try {
                         wallpaperManager.clear(WallpaperManager.FLAG_LOCK)
-                        Log.d(TAG, "Cleared lock screen wallpaper override")
+                        Log.d(TAG, "Cleared lock screen wallpaper override for profile ${profile.displayName}")
                     } catch (e: Exception) {
                         Log.w(TAG, "Unable to clear lock screen wallpaper: ${e.message}")
                     }
                     return@launch
                 }
 
-                // Generate minimalist slate lockscreen bitmap
+                // Generate minimalist pitch-black profile-specific lockscreen bitmap
                 val displayMetrics = context.resources.displayMetrics
                 val width = if (displayMetrics.widthPixels > 0) displayMetrics.widthPixels else 1080
                 val height = if (displayMetrics.heightPixels > 0) displayMetrics.heightPixels else 2400
 
                 val bitmap = generateLockscreenBitmap(width, height, profile)
                 wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
-                Log.d(TAG, "Applied minimalist focus lockscreen for ${profile.displayName}")
+                Log.d(TAG, "Applied minimalist OLED focus lockscreen for ${profile.displayName}")
             } catch (e: SecurityException) {
                 Log.w(TAG, "Permission denied for setting wallpaper: ${e.message}")
             } catch (e: Exception) {
@@ -1217,75 +1718,190 @@ class FocusStateManager private constructor(context: Context) {
         }
     }
 
+    /**
+     * Generates a minimalist pitch-black (#000000) OLED lockscreen wallpaper inspired by the
+     * user's reference artwork, with distinct dark-slate vector line art and a bottom-right
+     * status badge ("DND", "GAME", "WORK", "SLEEP") for each active Focus Profile.
+     */
     private fun generateLockscreenBitmap(width: Int, height: Int, profile: FocusProfile): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // 1. Dark Slate Slate Background (#0B0F17)
-        canvas.drawColor(android.graphics.Color.parseColor("#0B0F17"))
+        // 1. Pure Pitch-Black (#000000) OLED Canvas
+        canvas.drawColor(android.graphics.Color.BLACK)
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-        // 2. Subtle radial glow behind the emblem
-        val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#152238")
-            style = Paint.Style.FILL
-        }
-        val centerX = width / 2f
-        val emblemY = height * 0.38f
-        canvas.drawCircle(centerX, emblemY, width * 0.28f, glowPaint)
-
-        // 3. Geometric Minimalist Shield Outline
-        val shieldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#38EF7D")
+        // 2. Muted Dark-Slate Vector Outline Paints (matching reference image aesthetic)
+        val primaryStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#2E3543")
             style = Paint.Style.STROKE
-            strokeWidth = 4f
+            strokeWidth = (width * 0.0115f).coerceAtLeast(6f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
         }
-        val shieldPath = Path().apply {
-            val sWidth = width * 0.16f
-            val sHeight = width * 0.22f
-            moveTo(centerX, emblemY - sHeight * 0.5f)
-            lineTo(centerX + sWidth, emblemY - sHeight * 0.35f)
-            quadTo(centerX + sWidth, emblemY + sHeight * 0.2f, centerX, emblemY + sHeight * 0.6f)
-            quadTo(centerX - sWidth, emblemY + sHeight * 0.2f, centerX - sWidth, emblemY - sHeight * 0.35f)
-            close()
+        val secondaryStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#282F3C")
+            style = Paint.Style.STROKE
+            strokeWidth = (width * 0.0095f).coerceAtLeast(5f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
         }
-        canvas.drawPath(shieldPath, shieldPaint)
 
-        // 4. Crescent focus arc inside
-        val crescentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
+        // 3. Bottom-Right Badge Paints
+        val badgeIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#6E7785")
             style = Paint.Style.FILL
         }
-        canvas.drawCircle(centerX, emblemY, width * 0.045f, crescentPaint)
-
-        // 5. Typography: "ZenShield • [Profile] Active"
-        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#90A4AE")
-            textSize = width * 0.038f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        val badgeStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#6E7785")
+            style = Paint.Style.STROKE
+            strokeWidth = (width * 0.0055f).coerceAtLeast(3f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#6E7785")
+            textSize = width * 0.033f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.08f
         }
-        canvas.drawText("SENTINAL FOCUS", centerX, height * 0.52f, brandPaint)
 
-        val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            textSize = width * 0.054f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText("${profile.displayName} Active", centerX, height * 0.565f, statusPaint)
+        val cx = width * 0.50f
+        val cy = height * 0.445f
+        val r = width * 0.135f
 
-        val subtitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#78909C")
-            textSize = width * 0.034f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-            textAlign = Paint.Align.CENTER
+        val sx = width * 0.715f
+        val sy = height * 0.655f
+        val sr = width * 0.044f
+
+        val bx = width * 0.855f
+        val by = height * 0.875f
+        val br = width * 0.022f
+
+        when (profile) {
+            FocusProfile.DO_NOT_DISTURB, FocusProfile.OFF -> {
+                // Centerpiece: Large Outlined Crescent Moon
+                drawCrescentPath(canvas, cx, cy, r, primaryStrokePaint)
+                // Secondary Lower-Right Outlined Crescent Moon
+                drawCrescentPath(canvas, sx, sy, sr, secondaryStrokePaint)
+                // Bottom-Right Badge: Filled Crescent Moon + "DND"
+                drawCrescentPath(canvas, bx, by, br, badgeIconPaint)
+                canvas.drawText("DND", bx, by + width * 0.062f, badgeTextPaint)
+            }
+
+            FocusProfile.GAMING -> {
+                // Centerpiece: Minimalist Outlined Tactical Gamepad Emblem
+                drawGamepadEmblem(canvas, cx, cy, r, primaryStrokePaint)
+                // Secondary Lower-Right Outlined Tactical D-Pad Crosshair
+                drawCrosshairEmblem(canvas, sx, sy, sr, secondaryStrokePaint)
+                // Bottom-Right Badge: Outlined Mini Gamepad + "GAME"
+                drawGamepadEmblem(canvas, bx, by, br * 1.15f, badgeStrokePaint)
+                canvas.drawText("GAME", bx, by + width * 0.062f, badgeTextPaint)
+            }
+
+            FocusProfile.WORK -> {
+                // Centerpiece: Minimalist Outlined Executive Briefcase
+                drawBriefcaseEmblem(canvas, cx, cy, r, primaryStrokePaint)
+                // Secondary Lower-Right Outlined Focus Diamond Node
+                drawFourPointStar(canvas, sx, sy, sr * 1.05f, secondaryStrokePaint)
+                // Bottom-Right Badge: Outlined Mini Briefcase + "WORK"
+                drawBriefcaseEmblem(canvas, bx, by, br * 1.1f, badgeStrokePaint)
+                canvas.drawText("WORK", bx, by + width * 0.062f, badgeTextPaint)
+            }
+
+            FocusProfile.SLEEP -> {
+                // Centerpiece: Outlined Crescent Moon with Constellation Stars
+                drawCrescentPath(canvas, cx, cy, r, primaryStrokePaint)
+                drawFourPointStar(canvas, cx + r * 0.75f, cy - r * 0.55f, r * 0.24f, primaryStrokePaint)
+                // Secondary Lower-Right Outlined Four-Point Star
+                drawFourPointStar(canvas, sx, sy, sr * 1.1f, secondaryStrokePaint)
+                // Bottom-Right Badge: Filled Crescent Moon + "SLEEP"
+                drawCrescentPath(canvas, bx, by, br, badgeIconPaint)
+                canvas.drawText("SLEEP", bx, by + width * 0.062f, badgeTextPaint)
+            }
         }
-        canvas.drawText("Distractions Shielded • Sanctuary Mode", centerX, height * 0.605f, subtitlePaint)
 
         return bitmap
+    }
+
+    private fun drawCrescentPath(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        val outer = Path().apply {
+            addCircle(cx, cy, radius, Path.Direction.CW)
+        }
+        val inner = Path().apply {
+            addCircle(cx + radius * 0.44f, cy - radius * 0.22f, radius * 0.84f, Path.Direction.CW)
+        }
+        val crescent = Path()
+        if (crescent.op(outer, inner, Path.Op.DIFFERENCE)) {
+            canvas.drawPath(crescent, paint)
+        } else {
+            canvas.drawCircle(cx, cy, radius, paint)
+        }
+    }
+
+    private fun drawFourPointStar(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        val inner = radius * 0.28f
+        val path = Path().apply {
+            moveTo(cx, cy - radius)
+            quadTo(cx + inner * 0.4f, cy - inner * 0.4f, cx + radius, cy)
+            quadTo(cx + inner * 0.4f, cy + inner * 0.4f, cx, cy + radius)
+            quadTo(cx - inner * 0.4f, cy + inner * 0.4f, cx - radius, cy)
+            quadTo(cx - inner * 0.4f, cy - inner * 0.4f, cx, cy - radius)
+            close()
+        }
+        canvas.drawPath(path, paint)
+    }
+
+    private fun drawCrosshairEmblem(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        canvas.drawCircle(cx, cy, radius * 0.78f, paint)
+        canvas.drawLine(cx - radius, cy, cx - radius * 0.35f, cy, paint)
+        canvas.drawLine(cx + radius * 0.35f, cy, cx + radius, cy, paint)
+        canvas.drawLine(cx, cy - radius, cx, cy - radius * 0.35f, paint)
+        canvas.drawLine(cx, cy + radius * 0.35f, cx, cy + radius, paint)
+    }
+
+    private fun drawGamepadEmblem(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        val w = radius * 1.15f
+        val h = radius * 0.72f
+        val rect = RectF(cx - w, cy - h, cx + w, cy + h)
+        canvas.drawRoundRect(rect, h * 0.75f, h * 0.75f, paint)
+
+        // Left D-Pad cross
+        val dpadX = cx - w * 0.44f
+        val dpadSize = radius * 0.24f
+        canvas.drawLine(dpadX - dpadSize, cy, dpadX + dpadSize, cy, paint)
+        canvas.drawLine(dpadX, cy - dpadSize, dpadX, cy + dpadSize, paint)
+
+        // Right Action Buttons
+        val btnX = cx + w * 0.44f
+        val btnR = radius * 0.10f
+        canvas.drawCircle(btnX + btnR * 1.4f, cy - btnR * 1.1f, btnR, paint)
+        canvas.drawCircle(btnX - btnR * 1.4f, cy + btnR * 1.1f, btnR, paint)
+    }
+
+    private fun drawBriefcaseEmblem(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        val bw = radius * 0.98f
+        val bh = radius * 0.72f
+        val bodyRect = RectF(cx - bw, cy - bh * 0.8f, cx + bw, cy + bh)
+        val corner = radius * 0.22f
+        canvas.drawRoundRect(bodyRect, corner, corner, paint)
+
+        // Top handle arch
+        val hw = radius * 0.38f
+        val hh = radius * 0.28f
+        val handleRect = RectF(cx - hw, cy - bh * 0.8f - hh, cx + hw, cy - bh * 0.8f + hh)
+        canvas.drawArc(handleRect, 180f, 180f, false, paint)
+
+        // Center divider line & clasp
+        canvas.drawLine(cx - bw, cy + bh * 0.05f, cx + bw, cy + bh * 0.05f, paint)
+        val claspW = radius * 0.18f
+        val claspH = radius * 0.15f
+        canvas.drawRoundRect(
+            RectF(cx - claspW, cy + bh * 0.05f - claspH, cx + claspW, cy + bh * 0.05f + claspH),
+            claspW * 0.4f,
+            claspW * 0.4f,
+            paint
+        )
     }
 
     private fun persistState(state: FocusSessionState) {
@@ -1312,6 +1928,13 @@ class FocusStateManager private constructor(context: Context) {
             .putStringSet(KEY_CUSTOM_GAME_PACKAGES, state.customGamePackages)
             .putBoolean(KEY_DECLINE_ALL_CALLS, state.declineAllCallsRegardless)
             .putInt(KEY_CUSTOM_DURATION_MINS, state.customDurationMinutes)
+            .putBoolean(KEY_WORK_SCHEDULE_ENABLED, state.workScheduleEnabled)
+            .putInt(KEY_WORK_START_HOUR, state.workScheduleStartHour)
+            .putInt(KEY_WORK_START_MIN, state.workScheduleStartMinute)
+            .putInt(KEY_WORK_END_HOUR, state.workScheduleEndHour)
+            .putInt(KEY_WORK_END_MIN, state.workScheduleEndMinute)
+            .putStringSet(KEY_WORK_SCHEDULE_DAYS, state.workScheduleDays.map { it.toString() }.toSet())
+            .putBoolean(KEY_IS_AUTO_WORK_SCHEDULE, state.isAutoTriggeredByWorkSchedule)
 
         if (state.expiresAtMillis != null && state.expiresAtMillis > System.currentTimeMillis() && state.activeProfile != FocusProfile.OFF) {
             editor.putLong(KEY_EXPIRES_AT, state.expiresAtMillis)
@@ -1352,7 +1975,7 @@ class FocusStateManager private constructor(context: Context) {
         const val THREE_MINUTES_MS = 180_000L
         const val AUTO_REPLY_COOLDOWN_MS = THREE_MINUTES_MS // 3-minute per-caller cooldown for declined call auto-replies
         const val THIRTY_MINUTES_MS = THREE_MINUTES_MS
-        const val GAME_EXIT_DEACTIVATION_DELAY_MS = 30_000L
+        const val GAME_EXIT_DEACTIVATION_DELAY_MS = 15_000L // 15-second grace period after exiting a game
         const val OUTGOING_CALL_COOLDOWN_MS = 600_000L // 10 minutes
         const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ Sentinal: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
 
@@ -1385,6 +2008,16 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_PREVIOUS_PROFILE_BEFORE_GAME = "key_prev_profile_game"
         private const val KEY_CUSTOM_GAME_PACKAGES = "key_custom_game_packages"
         private const val KEY_DECLINE_ALL_CALLS = "key_decline_all_calls"
+        private const val KEY_WORK_SCHEDULE_ENABLED = "key_work_schedule_enabled"
+        private const val KEY_WORK_START_HOUR = "key_work_start_hour"
+        private const val KEY_WORK_START_MIN = "key_work_start_min"
+        private const val KEY_WORK_END_HOUR = "key_work_end_hour"
+        private const val KEY_WORK_END_MIN = "key_work_end_min"
+        private const val KEY_WORK_SCHEDULE_DAYS = "key_work_schedule_days"
+        private const val KEY_IS_AUTO_WORK_SCHEDULE = "key_is_auto_work_schedule"
+        private const val KEY_DISMISSED_WORK_WINDOW_START = "key_dismissed_work_window_start"
+        private const val REQUEST_CODE_EXPIRATION_ALARM = 9401
+        private const val REQUEST_CODE_WORK_SCHEDULE_ALARM = 9402
 
         @Volatile
         private var INSTANCE: FocusStateManager? = null

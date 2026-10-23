@@ -19,10 +19,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
@@ -73,7 +79,7 @@ fun GameDetectionCard(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var isExpanded by remember { mutableStateOf(true) }
+    var isExpanded by remember { mutableStateOf(false) }
     val hasUsageAccess = remember(state.autoGameDetectionEnabled) {
         GameDetectorService.hasUsageStatsPermission(context)
     }
@@ -140,8 +146,8 @@ fun GameDetectionCard(
                         val subtitleText = when {
                             !state.autoGameDetectionEnabled -> "Auto-activation on launch disabled"
                             state.gameExitCountdownSeconds != null -> "⏳ Game exited/minimized • Deactivating in ${state.gameExitCountdownSeconds}s"
-                            state.activeProfile == FocusProfile.GAMING -> "🎮 Game active • In Gaming DND lockdown (Auto-exits 30s after leaving game)"
-                            else -> "Auto-activates on launch • Auto-deactivates 30s after exit"
+                            state.activeProfile == FocusProfile.GAMING -> "🎮 Game active • In Gaming DND lockdown (Auto-exits 15s after leaving game)"
+                            else -> "Auto-activates on launch • Auto-deactivates 15s after exit"
                         }
                         Text(
                             text = subtitleText,
@@ -155,18 +161,32 @@ fun GameDetectionCard(
                     }
                 }
 
-                Switch(
-                    checked = state.autoGameDetectionEnabled,
-                    onCheckedChange = { enabled ->
-                        stateManager.setAutoGameDetectionEnabled(enabled)
-                    },
-                    modifier = Modifier.testTag("toggle_auto_game_detection")
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Switch(
+                        checked = state.autoGameDetectionEnabled,
+                        onCheckedChange = { enabled ->
+                            stateManager.setAutoGameDetectionEnabled(enabled)
+                        },
+                        modifier = Modifier.testTag("toggle_auto_game_detection")
+                    )
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Collapse Game Detection Details" else "Expand Game Detection Details",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
-            AnimatedVisibility(visible = isExpanded) {
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically(animationSpec = ExpressiveMotion.bouncySpatialSpring()) + fadeIn(animationSpec = ExpressiveMotion.smoothColorSpring()),
+                exit = shrinkVertically(animationSpec = ExpressiveMotion.snappySpatialSpring()) + fadeOut(animationSpec = ExpressiveMotion.smoothColorSpring())
+            ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    // 30s Exit Countdown Banner if game was minimized/exited
+                    // 15s Exit Countdown Banner if game was minimized/exited
                     if (state.gameExitCountdownSeconds != null) {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
@@ -344,7 +364,7 @@ private fun VoipZeroAirtimeSection(
 
             StatusPillTag(
                 label = "Auto-Exit",
-                status = "30s Delay",
+                status = "15s Grace",
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                 contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 modifier = Modifier.weight(1f)

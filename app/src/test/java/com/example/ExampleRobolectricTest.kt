@@ -601,8 +601,346 @@ class ExampleRobolectricTest {
         assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
         assertEquals(null, stateManager.state.value.expiresAtMillis)
     }
+
+    @Test
+    fun `whatsapp incoming call with spannable title and callstyle decline intent is detected and hung up`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val service = org.robolectric.Robolectric.buildService(com.example.services.NotificationGuardService::class.java).create().get()
+
+        var declineBroadcastReceived = false
+        val declineAction = "com.example.TEST_WHATSAPP_DECLINE"
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+                if (intent?.action == declineAction) {
+                    declineBroadcastReceived = true
+                }
+            }
+        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            receiver,
+            android.content.IntentFilter(declineAction),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        val declinePendingIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            101,
+            android.content.Intent(declineAction).setPackage(context.packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val answerPendingIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            102,
+            android.content.Intent("com.example.TEST_WHATSAPP_ANSWER").setPackage(context.packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Simulate Android 12+ CallStyle notification from com.whatsapp with SpannableString & Bidi markers
+        val spannableCaller = android.text.SpannableString("\u202A+1 (555) 019-2834\u202C")
+        val notification = android.app.Notification.Builder(context, "whatsapp_calls")
+            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setCategory(android.app.Notification.CATEGORY_CALL)
+            .build()
+        notification.extras.putCharSequence(android.app.Notification.EXTRA_TITLE, spannableCaller)
+        notification.extras.putCharSequence(android.app.Notification.EXTRA_TEXT, "Silenced by Do Not Disturb")
+        notification.extras.putInt("android.callType", 1) // CALL_TYPE_INCOMING
+        notification.extras.putParcelable("android.declineIntent", declinePendingIntent)
+        notification.extras.putParcelable("android.answerIntent", answerPendingIntent)
+
+        val sbn = android.service.notification.StatusBarNotification(
+            "com.whatsapp",
+            "com.whatsapp",
+            23,
+            "whatsapp_call",
+            1000,
+            1000,
+            0,
+            notification,
+            android.os.Process.myUserHandle(),
+            System.currentTimeMillis()
+        )
+
+        assertFalse("Incoming WhatsApp call must not be classified as outgoing", service.isOutgoingCall(sbn))
+        assertTrue("Incoming WhatsApp CallStyle call must be detected", service.isIncomingVoipCall(sbn))
+        assertEquals("+1 (555) 019-2834", service.extractCallerTitle(sbn))
+
+        val hungUp = service.attemptProgrammaticHangUp(sbn)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertTrue("attemptProgrammaticHangUp must succeed for WhatsApp CallStyle notification", hungUp)
+        assertTrue("Decline PendingIntent broadcast must be fired", declineBroadcastReceived)
+
+        context.unregisterReceiver(receiver)
+    }
+
+    @Test
+    fun `whatsapp rapid notification updates during single call do not trigger false repeat breakthrough`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+        stateManager.resetSessionCaches()
+        stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+        stateManager.setAllowRepeatCallersEnabled(true)
+        stateManager.setDeclineAllCallsRegardless(false)
+
+        val service = org.robolectric.Robolectric.buildService(com.example.services.NotificationGuardService::class.java).create().get()
+
+        var declineCount = 0
+        val declineAction = "com.example.TEST_WA_BURST_DECLINE"
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+                if (intent?.action == declineAction) {
+                    declineCount++
+                }
+            }
+        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            receiver,
+            android.content.IntentFilter(declineAction),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        val declinePendingIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            201,
+            android.content.Intent(declineAction).setPackage(context.packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val answerPendingIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            202,
+            android.content.Intent("com.example.TEST_WA_BURST_ANSWER").setPackage(context.packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val buildWaSbn = { textLabel: String ->
+            val notif = android.app.Notification.Builder(context, "wa_voip")
+                .setSmallIcon(android.R.drawable.sym_call_incoming)
+                .setCategory(android.app.Notification.CATEGORY_CALL)
+                .addAction(android.app.Notification.Action.Builder(null, "Decline", declinePendingIntent).build())
+                .addAction(android.app.Notification.Action.Builder(null, "Answer", answerPendingIntent).build())
+                .build()
+            notif.extras.putCharSequence(android.app.Notification.EXTRA_TITLE, android.text.SpannableString("Sarah Connor"))
+            notif.extras.putCharSequence(android.app.Notification.EXTRA_TEXT, textLabel)
+
+            android.service.notification.StatusBarNotification(
+                "com.whatsapp",
+                "com.whatsapp",
+                42,
+                "wa_call_42",
+                1000,
+                1000,
+                0,
+                notif,
+                android.os.Process.myUserHandle(),
+                System.currentTimeMillis()
+            )
+        }
+
+        val initialCalls = stateManager.state.value.totalShieldedCalls
+
+        // 1st notification posted at t=0ms ("Calling...")
+        service.handleNotificationPostedInternal(buildWaSbn("WhatsApp voice call"))
+        // 2nd notification update posted 150ms later for the SAME call (avatar loaded / "Incoming voice call")
+        service.handleNotificationPostedInternal(buildWaSbn("Incoming voice call"))
+
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        // Both notifications must trigger decline (not allowed through as repeat caller!), and telemetry increments once
+        assertEquals("Both notification updates must fire the decline intent", 2, declineCount)
+        assertEquals("Shielded call count must increment once for the same call burst", initialCalls + 1, stateManager.state.value.totalShieldedCalls)
+
+        context.unregisterReceiver(receiver)
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `custom rule toggles are preserved across all profile switches`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        // Set custom rule toggles
+        stateManager.updateProfileSettings(
+            allowStarredOnly = false,
+            blockRepeatedCalls = true,
+            silenceNotifications = false
+        )
+        assertFalse(stateManager.state.value.allowStarredContactsOnly)
+        assertTrue(stateManager.state.value.blockRepeatedCallers)
+        assertFalse(stateManager.state.value.silenceNotifications)
+
+        // Switch across all profiles and verify custom toggles remain untouched
+        for (profile in listOf(
+            FocusProfile.DO_NOT_DISTURB,
+            FocusProfile.GAMING,
+            FocusProfile.WORK,
+            FocusProfile.SLEEP,
+            FocusProfile.OFF
+        )) {
+            stateManager.setProfile(profile)
+            assertFalse("allowStarredContactsOnly must be preserved in $profile", stateManager.state.value.allowStarredContactsOnly)
+            assertTrue("blockRepeatedCallers must be preserved in $profile", stateManager.state.value.blockRepeatedCallers)
+            assertFalse("silenceNotifications must be preserved in $profile", stateManager.state.value.silenceNotifications)
+        }
+
+        // Restore defaults
+        stateManager.updateProfileSettings(
+            allowStarredOnly = true,
+            blockRepeatedCalls = false,
+            silenceNotifications = true
+        )
+    }
+
+    @Test
+    fun `game exit grace period is 15 seconds and manual gaming mode auto exits on handleGameExited`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        assertEquals(15_000L, FocusStateManager.GAME_EXIT_DEACTIVATION_DELAY_MS)
+
+        // Manually turn on Gaming Mode
+        stateManager.setProfile(FocusProfile.GAMING)
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+        assertFalse(stateManager.state.value.isAutoTriggeredByGame)
+
+        // Exiting game after 15s grace period must auto-exit Gaming Mode even when turned on manually
+        stateManager.handleGameExited()
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+    }
+
+    @Test
+    fun `whatsapp 0ms generic placeholder does not lock out 100ms real caller update`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+        stateManager.resetSessionCaches()
+        stateManager.setProfile(FocusProfile.DO_NOT_DISTURB)
+        stateManager.setAllowRepeatCallersEnabled(true)
+        stateManager.setDeclineAllCallsRegardless(false)
+        stateManager.setAutoReplyEnabled(true)
+
+        val service = org.robolectric.Robolectric.buildService(com.example.services.NotificationGuardService::class.java).create().get()
+
+        var declineCount = 0
+        val declineAction = "com.example.TEST_WA_PLACEHOLDER_DECLINE"
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+                if (intent?.action == declineAction) {
+                    declineCount++
+                }
+            }
+        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            receiver,
+            android.content.IntentFilter(declineAction),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        // 1. T=0ms: WhatsApp posts foreground service connection placeholder ("WhatsApp" / "Incoming voice call") with 0 actions
+        val placeholderNotif = android.app.Notification.Builder(context, "wa_voip")
+            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setCategory(android.app.Notification.CATEGORY_CALL)
+            .build()
+        placeholderNotif.extras.putCharSequence(android.app.Notification.EXTRA_TITLE, "WhatsApp")
+        placeholderNotif.extras.putCharSequence(android.app.Notification.EXTRA_TEXT, "Incoming voice call")
+
+        val placeholderSbn = android.service.notification.StatusBarNotification(
+            "com.whatsapp",
+            "com.whatsapp",
+            77,
+            "wa_call_77",
+            1000,
+            1000,
+            0,
+            placeholderNotif,
+            android.os.Process.myUserHandle(),
+            System.currentTimeMillis()
+        )
+        service.handleNotificationPostedInternal(placeholderSbn)
+
+        // 2. T=100ms: WhatsApp updates same notification key with real caller name ("Emma Watson") and Decline action
+        val declinePendingIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            301,
+            android.content.Intent(declineAction).setPackage(context.packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val answerPendingIntent = android.app.PendingIntent.getBroadcast(
+            context,
+            302,
+            android.content.Intent("com.example.TEST_WA_PLACEHOLDER_ANSWER").setPackage(context.packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val realNotif = android.app.Notification.Builder(context, "wa_voip")
+            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setCategory(android.app.Notification.CATEGORY_CALL)
+            .addAction(android.app.Notification.Action.Builder(null, "Decline", declinePendingIntent).build())
+            .addAction(android.app.Notification.Action.Builder(null, "Answer", answerPendingIntent).build())
+            .build()
+        realNotif.extras.putCharSequence(android.app.Notification.EXTRA_TITLE, "Emma Watson")
+        realNotif.extras.putCharSequence(android.app.Notification.EXTRA_TEXT, "Incoming voice call")
+
+        val realSbn = android.service.notification.StatusBarNotification(
+            "com.whatsapp",
+            "com.whatsapp",
+            77,
+            "wa_call_77",
+            1000,
+            1000,
+            0,
+            realNotif,
+            android.os.Process.myUserHandle(),
+            System.currentTimeMillis()
+        )
+        service.handleNotificationPostedInternal(realSbn)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertEquals("Real caller update must fire the decline intent", 1, declineCount)
+        assertTrue(
+            "Latest intercept must record real caller Emma Watson",
+            stateManager.state.value.recentIntercepts.any { it.sourceLabel.contains("Emma Watson") }
+        )
+
+        context.unregisterReceiver(receiver)
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `work focus schedule activates during configured window and deactivates outside window`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        stateManager.setWorkScheduleTime(9, 0, 17, 0)
+        stateManager.setWorkScheduleDays(setOf(java.util.Calendar.MONDAY, java.util.Calendar.TUESDAY))
+        stateManager.setWorkScheduleEnabled(true)
+
+        // Upcoming Monday at 10:30 AM -> Inside window
+        val mondayMorning = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, 7)
+            set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+            set(java.util.Calendar.HOUR_OF_DAY, 10)
+            set(java.util.Calendar.MINUTE, 30)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        stateManager.evaluateWorkSchedule(mondayMorning.timeInMillis)
+        assertEquals(FocusProfile.WORK, stateManager.getActiveProfile())
+        assertTrue(stateManager.state.value.isAutoTriggeredByWorkSchedule)
+        assertTrue(stateManager.state.value.expiresAtMillis != null)
+
+        // Monday at 18:00 (6:00 PM) -> Outside window -> Auto-reverts to OFF
+        val mondayEvening = (mondayMorning.clone() as java.util.Calendar).apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 18)
+            set(java.util.Calendar.MINUTE, 0)
+        }
+        stateManager.evaluateWorkSchedule(mondayEvening.timeInMillis)
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+        assertFalse(stateManager.state.value.isAutoTriggeredByWorkSchedule)
+
+        stateManager.setWorkScheduleEnabled(false)
+        stateManager.setProfile(FocusProfile.OFF)
+    }
 }
-
-
 
 

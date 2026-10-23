@@ -1,85 +1,52 @@
-# Sentinal — Zero-Floor Timer Deactivation, Multi-Surface Auto-Reply Toggle & 3-Minute Cooldown
+# Phase 13: Sentinel Resizable Material You Home Screen Widget (2x1 Minimum)
 
-This update guarantees that timed Focus Shield sessions immediately deactivate at `00:00` without ever ticking into negative numbers, introduces one-tap **Declined Call Auto-Reply ON/OFF** controls across the Command Center, Live Notification Shade, and Rules tab, and sets the per-caller auto-reply cooldown to **3 minutes (180 seconds)**.
-
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> The following product decisions were confirmed during interactive clarification and govern this implementation:
-
-- **Confirmed Decision 1 — Auto-Reply Toggle Placement**: The Declined Call Auto-Reply ON/OFF toggle will be accessible and synchronized in real time across **all three surfaces**: the **Shield Command Center** (Hero card & Live HUD preview), the **Live Notification Shade** (interactive action pill), and the **Rules Tab** (`Declined Call Auto-Reply` card).
-- **Confirmed Decision 2 — 3-Minute Cooldown Scope**: The **3-minute (`180,000 ms`) cooldown** applies strictly to **declined call auto-replies** per caller, preventing repeated auto-reply spam while still declining incoming calls according to the active Focus Shield profile.
+## Overview
+Add a resizable **2x1 Material You Home Screen Widget** to **Sentinel** (`com.zenshield.focus`) so users can monitor their active focus profile at a glance and toggle focus mode on or off directly from their home screen, plus a live in-app widget preview and one-tap **Pin to Home Screen** launcher action.
 
 ---
 
-## 1. Overview & Core Concept
-
-- **What It Does**:
-  1. **Guaranteed `00:00` Auto-Deactivation & Non-Negative Timer Clamp**: Eliminates negative countdown displays (`-00:01 left`) in both the Android notification shade and in-app UI by clamping all remaining-time calculations to a strict zero floor (`>= 0L`), replacing unbounded SystemUI `Chronometer` negative ticking with clamped live formatting + `setTimeoutAfter(remainingMs)`, and enforcing immediate `FocusProfile.OFF` deactivation the instant any timer reaches `00:00`.
-  2. **Synchronized Auto-Reply ON/OFF Control**: Gives users explicit control over whether declined calls trigger an automated reply message or are declined completely silently, toggleable with one tap from the Command Center, the Live Notification Shade, or the Rules tab.
-  3. **3-Minute Auto-Reply Cooldown**: Reduces the per-caller auto-reply cooldown from 30 minutes to **3 minutes (`180,000 ms`)**, matching the 3-minute repeat-caller emergency window.
-- **Target Audience / Persona**: Mobile gamers, deep-work professionals, and privacy-conscious users who want predictable timed focus sessions and instant control over whether callers receive automated text replies.
-- **Key Value**: Timed sessions end cleanly on the exact second without negative timer artifacts, and users can switch between "Decline + Auto-Reply" and "Silent Call Bouncer" from anywhere.
-
----
-
-## 2. User Experience & Visual Design
-
-- **Key User Flows**:
-  1. **Timed Focus Expiration (`00:00` Auto-Shutoff)**:
-     - When a user starts a timed Focus session (via preset chips `45m`, `1h`, `2h`, the `5m–8h` custom slider, or `+15m`/`-15m` pills), the live countdown ticks down second-by-second.
-     - If the user taps `-15m` when 15 minutes or less remain, or when the countdown naturally reaches `00:00`, Focus Shield immediately transitions to `FocusProfile.OFF`, triggers the `FOCUS_DEACTIVATED` spring haptic waveform, restores the system interruption filter, and removes the Live Notification from the shade—never displaying `-00:01`.
-  2. **Toggling Auto-Reply Across Surfaces**:
-     - **Command Center**: Inside the Hero Status Header Card (and the Live Notification HUD Preview card), an expressive pill row lets the user toggle **Call Auto-Reply (`ON` / `OFF`)** with bouncy corner morphing and tactile spring haptics.
-     - **Live Notification Shade**: The expanded Live Notification HUD includes a dedicated **`Reply: ON` / `Reply: OFF`** pill button (`ACTION_TOGGLE_AUTO_REPLY`) that toggles auto-reply in-place and updates the shade subtitle immediately (`"Call Auto-Reply ON (3m Cooldown)"` vs. `"Silent Call Bouncer • Auto-Reply OFF"`).
-     - **Rules Tab**: The `Declined Call Auto-Reply` card displays the master switch, custom message editor, and updated **3-Minute Cooldown** badge.
-  3. **3-Minute Per-Caller Auto-Reply Cooldown**:
-     - When `autoReplyEnabled` is `true` and an incoming call is declined, Sentinal checks if an auto-reply was sent to that caller within the last **3 minutes (`180,000 ms`)**. If not, it dispatches the profile auto-reply and records the timestamp; subsequent declined calls from the same caller within 3 minutes are declined without sending duplicate replies.
+## 1. Widget Metadata & Drawable Resources
+* **`/app/src/main/res/xml/sentinel_widget_info.xml`**
+  * Configure `appwidget-provider` with:
+    * `android:minWidth="140dp"` and `android:minHeight="70dp"` (fits a compact 2x1 cell grid).
+    * `android:targetCellWidth="2"` and `android:targetCellHeight="1"` for Android 12+ launchers.
+    * `android:resizeMode="horizontal|vertical"` so users can resize from a 2x1 pill up to larger grids.
+    * `android:initialLayout="@layout/widget_sentinel"` and `android:widgetCategory="home_screen"`.
+* **Custom Material You RemoteViews Drawables (`/app/src/main/res/drawable/`)**
+  * `bg_widget_sentinel_inactive.xml` & `bg_widget_sentinel_active.xml`: Deep slate Material You card surfaces (`#131722` inactive / `#162238` active with subtle accent stroke and `24dp` rounded corners).
+  * `bg_widget_toggle_pill_off.xml` & `bg_widget_toggle_pill_on.xml`: Sleek pill toggle button backgrounds (`#232A3B` when inactive, vibrant Material You teal/indigo accent `#14B8A6` / `#38BDF8` when engaged).
+  * `ic_widget_shield_active.xml` & `ic_widget_shield_inactive.xml`: Crisp vector shield status icons for `RemoteViews`.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Software-Clamped Live Timer vs. Unbounded System `Chronometer` CountDown**
-  - *Chosen Approach*: Clamp all countdown values with `maxOf(0L, expiryTime - now)` and render formatted non-negative `MM:SS` / `HH:MM:SS` strings in the 1-second Foreground Service ticker alongside `NotificationCompat.Builder.setTimeoutAfter(remainingMs)` and multi-layer expiration guards.
-  - *Why*: Android's `RemoteViews.setChronometerCountDown(true)` continues ticking into `-00:01`, `-00:02` on the SystemUI thread if a background coroutine is delayed by even 500ms or if `chronometerBase` is passed. Explicit zero-clamped formatting paired with `setTimeoutAfter` guarantees the user never sees a negative number and the shade notification self-terminates at zero.
-- **Decision 2: Multi-Surface Auto-Reply State Synchronization**
-  - *Chosen Approach*: Bind the Command Center quick-toggle, Live Notification `ACTION_TOGGLE_AUTO_REPLY` PendingIntent, and Rules tab switch to `FocusStateManager.setAutoReplyEnabled(enabled)` / `toggleAutoReply()`.
-  - *Why*: Ensures a single source of truth (`StateFlow<FocusSessionState>`) that immediately refreshes both the Jetpack Compose UI and the pinned RemoteViews notification.
+## 2. Widget Layout XML (`/app/src/main/res/layout/widget_sentinel.xml`)
+* Build a dark Material You `RemoteViews`-compatible layout (`RelativeLayout` / `LinearLayout`):
+  * **Left Status Touch Zone (`@+id/widget_left_container`):**
+    * Tapping opens `MainActivity` directly to inspect or customize Sentinel.
+    * Displays the circular shield badge (`@+id/widget_status_icon`), primary title (`@+id/widget_title_text`: `"Sentinel Active"` or `"Sentinel Inactive"`), and active profile/rule subtitle (`@+id/widget_subtitle_text`: e.g., `"Do Not Disturb • Bouncer On"` or `"Tap toggle to engage DND"`).
+  * **Right Toggle Button Touch Zone (`@+id/widget_toggle_button`):**
+    * Tapping fires `com.zenshield.focus.ACTION_TOGGLE_WIDGET` via `PendingIntent.getBroadcast(...)`.
+    * Displays the current state label (`"ON"` / `"OFF"`) with dynamic pill background and high-contrast text.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+## 3. AppWidgetProvider & Real-Time State Sync
+* **`/app/src/main/java/com/example/widgets/SentinelWidgetProvider.kt`**
+  * Implement `SentinelWidgetProvider : AppWidgetProvider()`:
+    * Handle both `AppWidgetManager.ACTION_APPWIDGET_UPDATE` and `ACTION_TOGGLE_WIDGET = "com.zenshield.focus.ACTION_TOGGLE_WIDGET"`.
+    * When `ACTION_TOGGLE_WIDGET` is received:
+      * Read current profile via `FocusStateManager.getActiveProfile(context)`.
+      * If `activeProfile != FocusProfile.OFF`, turn Sentinel **OFF** (`FocusProfile.OFF`).
+      * If `activeProfile == FocusProfile.OFF`, immediately activate **Do Not Disturb** (`FocusProfile.DO_NOT_DISTURB`) and start `FocusForegroundService`.
+    * Update all active widget instances via `updateAllWidgets(context)` with dynamic titles, active profile name, shield icon, card surface, and toggle pill styling.
+* **`/app/src/main/java/com/example/core/FocusStateManager.kt`**
+  * Add `FocusStateManager.getActiveProfile(context: Context): FocusProfile` to the companion object.
+  * Automatically call `SentinelWidgetProvider.updateAllWidgets(appContext)` whenever `persistState(...)` or `setProfile(...)` runs so profile changes from the app, Quick Settings tile, notification shade, Work Schedule, or Auto-Game detector immediately reflect on the home screen widget.
 
-- **Architecture & Component Diagram**:
+---
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                        FocusStateManager (Singleton)                       │
-│  • expiresAtMillis + Zero-Floor Expiration Guard (checkAndExpireIfNeeded)  │
-│  • autoReplyEnabled: Boolean  +  toggleAutoReply()                         │
-│  • AUTO_REPLY_COOLDOWN_MS = 180_000L (3 Minutes)                           │
-└───────────────┬───────────────────────────────┬────────────────────────────┘
-                │                               │
-                ▼                               ▼
-┌───────────────────────────────────┐ ┌──────────────────────────────────────┐
-│    Jetpack Compose UI Surfaces    │ │      Background Services & Shade     │
-│  • HeroStatusHeaderCard           │ │  • ZenShieldForegroundService        │
-│    - Non-negative rolling timer   │ │    - 1s clamped timer + timeoutAfter │
-│    - Auto-Reply Quick Toggle Pill │ │    - ACTION_TOGGLE_AUTO_REPLY pill   │
-│  • LiveNotificationHudPreviewCard │ │  • NotificationGuardService          │
-│    - Reply: ON/OFF pill button    │ │    - Checks checkAndExpireIfNeeded() │
-│  • VoipAutoReplyCustomizationCard │ │    - Checks isAutoReplyEnabled()     │
-│    - Master Switch & 3m Cooldown  │ │    - Enforces 3-min caller cooldown  │
-└───────────────────────────────────┘ └──────────────────────────────────────┘
-```
-
-- **Interactive Component & State Mapping**:
-  - **Timer Expiration & Zero-Floor Clamp**:
-    - `FocusStateManager.checkAndExpireIfNeeded()`: Checks if `activeProfile != FocusProfile.OFF && expiresAtMillis != null && System.currentTimeMillis() >= expiresAtMillis`; if true, immediately invokes `setProfile(FocusProfile.OFF)` and returns `true`.
-    - `FocusStateManager.setProfile(profile, duration)`: When activating a profile while `duration == DurationOption.UNTIL_TURNED_OFF`, respects `duration.durationMinutes`; when `setCustomDurationMinutes(minutes)` is used or a timed `DurationOption` is selected, sets `expiresAtMillis` and starts the 500ms-precision expiration loop.
-    - `FocusStateManager.adjustRemainingTime(context, deltaMinutes)`: If subtracting time (`-15m`) brings `currentExpiry + delta <= now`, immediately calls `setProfile(FocusProfile.OFF)` so the shield deactivates cleanly instead of clamping or going negative.
-    - `ZenShieldForegroundService`: Formats remaining time with `maxOf(0L, expiryTime - now)` in `tv_expanded_duration` / `tv_collapsed_duration` when timed (hiding the unbounded countdown `Chronometer` so SystemUI can never render `-00:01`), sets `builder.setTimeoutAfter(remainingMs)`, and calls `setProfile(FocusProfile.OFF)` as soon as `remainingMs <= 0L`.
-  - **Auto-Reply Toggle & 3-Minute Cooldown**:
-    - `FocusStateManager.toggleAutoReply()`: Flips `autoReplyEnabled`, persists to `SharedPreferences`, plays `ExpressiveHaptics.playSpringTap(appContext)`, and triggers `ZenShieldForegroundService.update(appContext)`.
-    - `FocusStateManager.shouldSendAutoReply(senderName)`: Returns `false` if `!isAutoReplyEnabled()`, `false` if `isRecentOutgoingCall(senderName)`, and checks `(now - lastTimestamp) > THREE_MINUTES_MS` (`180_000L`).
+## 4. Manifest Registration & In-App Live Preview / Pin Card
+* **`/app/src/main/AndroidManifest.xml`**
+  * Register `.widgets.SentinelWidgetProvider` with `android:exported="true"`, `<action android:name="android.appwidget.action.APPWIDGET_UPDATE" />`, `<action android:name="com.zenshield.focus.ACTION_TOGGLE_WIDGET" />`, and `@xml/sentinel_widget_info`.
+* **In-App Live Widget Preview & Pin Action (`FocusDashboardScreen.kt`)**
+  * Add a compact **Home Screen Widget** card on the Command tab showing a live interactive replica of the 2x1 Material You widget (where the right button toggles focus and the **Pin to Home Screen** button calls `AppWidgetManager.requestPinAppWidget(...)` on Android 8.0+).
