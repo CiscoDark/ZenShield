@@ -18,11 +18,17 @@ class BootCompletedReceiver : BroadcastReceiver() {
             ACTION_EXPIRE_FOCUS_SESSION -> {
                 stateManager.checkAndExpireIfNeeded()
                 stateManager.evaluateWorkSchedule()
+                stateManager.evaluateSleepSchedule()
             }
             ACTION_EVALUATE_WORK_SCHEDULE -> {
                 stateManager.checkAndExpireIfNeeded()
                 stateManager.evaluateWorkSchedule()
                 stateManager.scheduleNextWorkScheduleAlarm()
+            }
+            ACTION_EVALUATE_SLEEP_SCHEDULE -> {
+                stateManager.checkAndExpireIfNeeded()
+                stateManager.evaluateSleepSchedule()
+                stateManager.scheduleNextSleepScheduleAlarm()
             }
             else -> {
                 stateManager.restoreAfterBootOrScheduleTick()
@@ -43,6 +49,7 @@ class BootCompletedReceiver : BroadcastReceiver() {
         private const val TAG = "BootCompletedReceiver"
         const val ACTION_EXPIRE_FOCUS_SESSION = "com.example.zenshield.ACTION_EXPIRE_FOCUS_SESSION"
         const val ACTION_EVALUATE_WORK_SCHEDULE = "com.example.zenshield.ACTION_EVALUATE_WORK_SCHEDULE"
+        const val ACTION_EVALUATE_SLEEP_SCHEDULE = "com.example.zenshield.ACTION_EVALUATE_SLEEP_SCHEDULE"
     }
 }
 

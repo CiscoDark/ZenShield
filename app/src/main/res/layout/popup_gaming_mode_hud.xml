@@ -13,12 +13,14 @@
 
     <ImageView
         android:id="@+id/iv_popup_icon"
-        android:layout_width="20dp"
-        android:layout_height="20dp"
-        android:layout_marginEnd="8dp"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:layout_marginEnd="10dp"
+        android:background="@drawable/notification_chip_bg"
         android:contentDescription="@string/app_name"
+        android:padding="5dp"
         android:src="@drawable/ic_launcher_monochrome"
-        android:tint="#38EF7D" />
+        android:tint="#D3E3FD" />
 
     <LinearLayout
         android:layout_width="wrap_content"
@@ -29,10 +31,10 @@
             android:id="@+id/tv_popup_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:text="GAMING MODE ACTIVE"
-            android:textColor="#38EF7D"
-            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:text="Gaming Mode Active"
+            android:textColor="#E2E3EC"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
@@ -40,7 +42,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Calls &amp; Pop-ups Shielded • Zero Interruption"
-            android:textColor="#E2E8F0"
+            android:textColor="#C4C6D0"
             android:textSize="11sp" />
     </LinearLayout>
 

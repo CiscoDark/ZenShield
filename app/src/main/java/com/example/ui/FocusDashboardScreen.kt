@@ -76,9 +76,17 @@ import com.example.core.DurationOption
 import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
+import com.example.ui.theme.ExpressiveHaptics
+import com.example.widgets.SentinelWidgetProvider
 import kotlinx.coroutines.delay
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.AddToHomeScreen
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextOverflow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +98,16 @@ fun FocusDashboardScreen(
     val state by stateManager.state.collectAsState()
     val context = LocalContext.current
     val hasDndPermission = stateManager.isNotificationPolicyAccessGranted()
+    var showSessionHistory by remember { mutableStateOf(false) }
+
+    if (showSessionHistory) {
+        FocusSessionHistoryScreen(
+            stateManager = stateManager,
+            onBack = { showSessionHistory = false },
+            modifier = modifier
+        )
+        return
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -169,14 +187,10 @@ fun FocusDashboardScreen(
                 )
             }
 
-            if (!hasDndPermission) {
+            if (!hasDndPermission || !GamingModePopupManager.hasOverlayPermission(context)) {
                 item {
                     PermissionAlertCard(
-                        onGrantClicked = {
-                            runCatching {
-                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-                            }
-                        }
+                        onGrantClicked = onNavigateToSettings
                     )
                 }
             }
@@ -200,6 +214,25 @@ fun FocusDashboardScreen(
             }
 
             item {
+                CinemaModeDashboardCard(
+                    stateManager = stateManager
+                )
+            }
+
+            item {
+                FocusSessionHistoryDashboardCard(
+                    stateManager = stateManager,
+                    onOpenFullScreen = { showSessionHistory = true }
+                )
+            }
+
+            item {
+                GamingModeWeeklyComparisonCard(
+                    stateManager = stateManager
+                )
+            }
+
+            item {
                 Text(
                     text = "Session Duration",
                     style = MaterialTheme.typography.titleMedium,
@@ -214,6 +247,41 @@ fun FocusDashboardScreen(
                     onDurationSelected = { duration ->
                         stateManager.setDuration(duration)
                     }
+                )
+            }
+
+            item {
+                NotificationPriorityRulesCard(
+                    state = state,
+                    stateManager = stateManager
+                )
+            }
+
+            item {
+                WorkScheduleCard(
+                    state = state,
+                    stateManager = stateManager
+                )
+            }
+
+            item {
+                SleepScheduleCard(
+                    state = state,
+                    stateManager = stateManager
+                )
+            }
+
+            item {
+                HomeScreenWidgetCard(
+                    state = state,
+                    stateManager = stateManager
+                )
+            }
+
+            item {
+                QuickSettingsTilesCard(
+                    state = state,
+                    stateManager = stateManager
                 )
             }
 
@@ -972,3 +1040,277 @@ fun TelemetryMetricBox(
         }
     }
 }
+
+@Composable
+fun HomeScreenWidgetCard(
+    state: FocusSessionState,
+    stateManager: FocusStateManager,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val activeProfile = state.activeProfile
+    val isActive = activeProfile != FocusProfile.OFF
+    var pinFeedbackMessage by remember { mutableStateOf<String?>(null) }
+
+    val previewBorderColor by animateColorAsState(
+        targetValue = if (isActive) Color(0xFF38EF7D) else Color(0xFF2B3245),
+        label = "widget_preview_border"
+    )
+    val togglePillBg by animateColorAsState(
+        targetValue = if (isActive) Color(0xFF38EF7D) else Color(0xFF232A3B),
+        label = "widget_preview_pill_bg"
+    )
+    val togglePillTextColor by animateColorAsState(
+        targetValue = if (isActive) Color(0xFF062116) else Color(0xFFE2E8F0),
+        label = "widget_preview_pill_text"
+    )
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("home_screen_widget_card"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Widgets,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Home Screen Widget",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f)
+                            ) {
+                                Text(
+                                    text = "2×1 RESIZABLE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Left zone opens Sentinel • Right pill toggles DND",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // Live 2x1 Widget Preview Frame
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = Color.Transparent,
+                border = BorderStroke(if (isActive) 1.5.dp else 1.dp, previewBorderColor),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("live_widget_2x1_preview")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            brush = if (isActive) {
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color(0xFF152338), Color(0xFF122B2E))
+                                )
+                            } else {
+                                Brush.horizontalGradient(
+                                    colors = listOf(Color(0xFF131722), Color(0xFF131722))
+                                )
+                            }
+                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Left Zone (Status Icon + Title + Subtitle)
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(11.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isActive) Color(0xFF193A38) else Color(0xFF202636),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isActive) Color(0xFF38EF7D) else Color(0xFF323B52)
+                            ),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Shield,
+                                    contentDescription = "Widget Shield Status",
+                                    tint = if (isActive) Color(0xFF38EF7D) else Color(0xFF94A3B8),
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isActive) "Sentinel Active" else "Sentinel Inactive",
+                                color = Color(0xFFF8FAFC),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (isActive) {
+                                    val ruleTag = if (state.autoReplyEnabled) "Auto-Reply On" else "Shield Engaged"
+                                    "${activeProfile.displayName} • $ruleTag"
+                                } else {
+                                    "Tap toggle to engage DND"
+                                },
+                                color = if (isActive) Color(0xFF38EF7D) else Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    // Right Zone (Interactive Toggle Pill Button)
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = togglePillBg,
+                        border = if (isActive) null else BorderStroke(1.dp, Color(0xFF3D4761)),
+                        modifier = Modifier
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable {
+                                ExpressiveHaptics.playSpringTap(context)
+                                stateManager.resetSessionCaches()
+                                if (isActive) {
+                                    stateManager.setProfile(FocusProfile.OFF)
+                                } else {
+                                    stateManager.setProfile(FocusProfile.DO_NOT_DISTURB, state.durationOption)
+                                }
+                            }
+                            .testTag("widget_preview_toggle_button")
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isActive) "ON" else "OFF",
+                                color = togglePillTextColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.8.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Pin to Home Screen Action Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        val pinned = SentinelWidgetProvider.requestPinWidget(context)
+                        pinFeedbackMessage = if (pinned) {
+                            "Widget pin prompt opened! Confirm to place on your Home Screen."
+                        } else {
+                            "Long-press your Home Screen → Widgets → drag the 2×1 Sentinal widget."
+                        }
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("pin_widget_to_home_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.AddToHomeScreen,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Pin 2×1 Widget to Home Screen",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = pinFeedbackMessage != null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                pinFeedbackMessage?.let { msg ->
+                    Text(
+                        text = msg,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+

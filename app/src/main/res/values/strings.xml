@@ -1,8 +1,14 @@
 <resources>
     <string name="app_name">Sentinal</string>
     <string name="tile_label">Sentinal</string>
+    <string name="tile_gaming_label">Gaming Mode</string>
+    <string name="tile_sleep_label">Sleep Mode</string>
+    <string name="tile_gaming_active_sub">Calls &amp; Alerts Shielded</string>
+    <string name="tile_sleep_active_sub">Bedtime Shield Active</string>
+    <string name="tile_tap_to_activate">Tap to activate</string>
     <string name="profile_off">Off</string>
     <string name="profile_dnd">Do Not Disturb</string>
+    <string name="profile_cinema">Cinema</string>
     <string name="profile_gaming">Gaming</string>
     <string name="profile_work">Work</string>
     <string name="profile_sleep">Sleep</string>
@@ -15,4 +21,8 @@
     <string name="theme_amoled_black">AMOLED Pure Black</string>
     <string name="permission_dnd_required">Notification Policy Access Required</string>
     <string name="grant_permission">Grant Permission</string>
+    <string name="widget_description">Resizable 2x1 Material You Focus status and instant Do Not Disturb toggle</string>
+    <string name="widget_sentinel_active">Sentinel Active</string>
+    <string name="widget_sentinel_inactive">Sentinel Inactive</string>
+    <string name="widget_icon_content_description">Sentinel Shield Status</string>
 </resources>

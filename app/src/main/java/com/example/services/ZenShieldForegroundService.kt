@@ -62,6 +62,7 @@ class ZenShieldForegroundService : Service() {
                 return
             }
             stateManager.evaluateWorkSchedule()
+            stateManager.evaluateSleepSchedule()
             val currentState = stateManager.state.value
             if (currentState.activeProfile == FocusProfile.OFF) {
                 stopForegroundService()
@@ -86,11 +87,26 @@ class ZenShieldForegroundService : Service() {
         when (action) {
             ACTION_STOP_FOCUS -> {
                 Log.d(TAG, "Received ACTION_STOP_FOCUS: terminating focus session")
+                if (stateManager.state.value.pendingGameActivationPackage != null) {
+                    stateManager.declinePendingGameActivation()
+                }
                 if (stateManager.state.value.activeProfile != FocusProfile.OFF) {
                     stateManager.setProfile(FocusProfile.OFF)
                 }
                 stopForegroundService()
                 return START_NOT_STICKY
+            }
+            ACTION_CONFIRM_GAME_PROMPT -> {
+                Log.d(TAG, "Received ACTION_CONFIRM_GAME_PROMPT: activating Gaming Mode immediately")
+                stateManager.confirmPendingGameActivation()
+            }
+            ACTION_DECLINE_GAME_PROMPT -> {
+                Log.d(TAG, "Received ACTION_DECLINE_GAME_PROMPT: declining Gaming Mode for current game session")
+                stateManager.declinePendingGameActivation()
+                if (stateManager.state.value.activeProfile == FocusProfile.OFF) {
+                    stopForegroundService()
+                    return START_NOT_STICKY
+                }
             }
             ACTION_CYCLE_MODE -> {
                 Log.d(TAG, "Received ACTION_CYCLE_MODE: cycling active focus profile")
@@ -287,11 +303,12 @@ class ZenShieldForegroundService : Service() {
         val liveAlertsSilenced = todayStats?.silencedNotifications ?: state.totalShieldedNotifications
 
         val modeTitle = when (profile) {
-            FocusProfile.GAMING -> "GAMING FOCUS"
-            FocusProfile.DO_NOT_DISTURB -> "DO NOT DISTURB"
-            FocusProfile.WORK -> "WORK FOCUS"
-            FocusProfile.SLEEP -> "SLEEP SHIELD"
-            FocusProfile.OFF -> "SENTINAL STANDBY"
+            FocusProfile.GAMING -> "Gaming Focus"
+            FocusProfile.DO_NOT_DISTURB -> "Do Not Disturb"
+            FocusProfile.WORK -> "Work Focus"
+            FocusProfile.SLEEP -> "Sleep Shield"
+            FocusProfile.CINEMA -> "Cinema Shield"
+            FocusProfile.OFF -> "Sentinal Standby"
         }
 
         val ruleSummary = buildString {
@@ -300,16 +317,16 @@ class ZenShieldForegroundService : Service() {
             append(if (state.declineAllCallsRegardless) "Zero-Tolerance" else "Alerts Silenced")
         }
 
-        // 1. Collapsed Live Notification RemoteViews
+        // 1. Collapsed Live Notification RemoteViews (Material 3 Tonal Card)
         val collapsedViews = RemoteViews(packageName, R.layout.notification_live_focus).apply {
             setTextViewText(R.id.tv_title, modeTitle)
             if (graceSeconds != null) {
-                setTextViewText(R.id.tv_live_badge, "EXIT ${graceSeconds}s")
-                setTextColor(R.id.tv_live_badge, Color.parseColor("#FFB300"))
+                setTextViewText(R.id.tv_live_badge, "Exit ${graceSeconds}s")
+                setTextColor(R.id.tv_live_badge, Color.parseColor("#FFDCC1"))
                 setInt(R.id.tv_live_badge, "setBackgroundResource", R.drawable.notification_chip_grace_bg)
             } else {
-                setTextViewText(R.id.tv_live_badge, "LIVE")
-                setTextColor(R.id.tv_live_badge, Color.parseColor("#38EF7D"))
+                setTextViewText(R.id.tv_live_badge, "Active")
+                setTextColor(R.id.tv_live_badge, Color.parseColor("#D3E3FD"))
                 setInt(R.id.tv_live_badge, "setBackgroundResource", R.drawable.notification_chip_bg)
             }
 
@@ -345,7 +362,7 @@ class ZenShieldForegroundService : Service() {
             setOnClickPendingIntent(R.id.btn_quick_stop, stopPendingIntent)
         }
 
-        // 2. Expanded Live HUD RemoteViews
+        // 2. Expanded Live Notification RemoteViews (Material 3 Tonal Card)
         val expandedViews = RemoteViews(packageName, R.layout.notification_live_focus_expanded).apply {
             setTextViewText(R.id.tv_expanded_title, modeTitle)
             setTextViewText(R.id.tv_expanded_subtitle, ruleSummary)
@@ -356,17 +373,22 @@ class ZenShieldForegroundService : Service() {
             )
             setTextColor(
                 R.id.btn_toggle_auto_reply,
-                if (state.autoReplyEnabled) Color.parseColor("#38EF7D") else Color.parseColor("#94A3B8")
+                if (state.autoReplyEnabled) Color.parseColor("#D3E3FD") else Color.parseColor("#C4C6D0")
+            )
+            setInt(
+                R.id.btn_toggle_auto_reply,
+                "setBackgroundResource",
+                if (state.autoReplyEnabled) R.drawable.notification_chip_bg else R.drawable.notification_button_bg
             )
             setOnClickPendingIntent(R.id.btn_toggle_auto_reply, toggleAutoReplyPendingIntent)
 
             if (graceSeconds != null) {
-                setTextViewText(R.id.tv_expanded_status, "EXITING IN ${graceSeconds}s")
-                setTextColor(R.id.tv_expanded_status, Color.parseColor("#FFB300"))
+                setTextViewText(R.id.tv_expanded_status, "Exiting in ${graceSeconds}s")
+                setTextColor(R.id.tv_expanded_status, Color.parseColor("#FFDCC1"))
                 setInt(R.id.tv_expanded_status, "setBackgroundResource", R.drawable.notification_chip_grace_bg)
             } else {
-                setTextViewText(R.id.tv_expanded_status, "LIVE • ACTIVE")
-                setTextColor(R.id.tv_expanded_status, Color.parseColor("#38EF7D"))
+                setTextViewText(R.id.tv_expanded_status, "Active")
+                setTextColor(R.id.tv_expanded_status, Color.parseColor("#D3E3FD"))
                 setInt(R.id.tv_expanded_status, "setBackgroundResource", R.drawable.notification_chip_bg)
             }
 
@@ -567,6 +589,8 @@ class ZenShieldForegroundService : Service() {
         const val ACTION_TOGGLE_AUTO_REPLY = "com.example.zenshield.ACTION_TOGGLE_AUTO_REPLY"
         const val ACTION_STOP_FOCUS = "com.example.zenshield.ACTION_STOP_FOCUS"
         const val ACTION_UPDATE_NOTIFICATION = "com.example.zenshield.ACTION_UPDATE_NOTIFICATION"
+        const val ACTION_CONFIRM_GAME_PROMPT = "com.example.zenshield.ACTION_CONFIRM_GAME_PROMPT"
+        const val ACTION_DECLINE_GAME_PROMPT = "com.example.zenshield.ACTION_DECLINE_GAME_PROMPT"
 
         fun start(context: Context) {
             val intent = Intent(context, ZenShieldForegroundService::class.java)

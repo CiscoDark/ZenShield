@@ -136,6 +136,15 @@ private val SleepDarkColorScheme = DefaultZenDarkColorScheme.copy(
     tertiary = SleepTertiaryDark
 )
 
+private val CinemaDarkColorScheme = DefaultZenDarkColorScheme.copy(
+    primary = CinemaPrimaryDark,
+    onPrimary = CinemaOnPrimaryDark,
+    primaryContainer = CinemaPrimaryContainerDark,
+    onPrimaryContainer = CinemaOnPrimaryContainerDark,
+    secondary = CinemaSecondaryDark,
+    tertiary = CinemaTertiaryDark
+)
+
 // Profile tailored light color schemes
 private val DndLightColorScheme = DefaultZenLightColorScheme.copy(
     primary = Color(0xFFB24A00),
@@ -173,6 +182,15 @@ private val SleepLightColorScheme = DefaultZenLightColorScheme.copy(
     tertiary = Color(0xFF6B538C)
 )
 
+private val CinemaLightColorScheme = DefaultZenLightColorScheme.copy(
+    primary = Color(0xFF7D5700),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFFFDEA5),
+    onPrimaryContainer = Color(0xFF271900),
+    secondary = Color(0xFF6E5C40),
+    tertiary = Color(0xFF904A45)
+)
+
 private fun getProfileColorScheme(profile: FocusProfile, darkTheme: Boolean): ColorScheme {
     return if (darkTheme) {
         when (profile) {
@@ -180,6 +198,7 @@ private fun getProfileColorScheme(profile: FocusProfile, darkTheme: Boolean): Co
             FocusProfile.GAMING -> GamingDarkColorScheme
             FocusProfile.WORK -> WorkDarkColorScheme
             FocusProfile.SLEEP -> SleepDarkColorScheme
+            FocusProfile.CINEMA -> CinemaDarkColorScheme
             FocusProfile.OFF -> DefaultZenDarkColorScheme
         }
     } else {
@@ -188,6 +207,7 @@ private fun getProfileColorScheme(profile: FocusProfile, darkTheme: Boolean): Co
             FocusProfile.GAMING -> GamingLightColorScheme
             FocusProfile.WORK -> WorkLightColorScheme
             FocusProfile.SLEEP -> SleepLightColorScheme
+            FocusProfile.CINEMA -> CinemaLightColorScheme
             FocusProfile.OFF -> DefaultZenLightColorScheme
         }
     }

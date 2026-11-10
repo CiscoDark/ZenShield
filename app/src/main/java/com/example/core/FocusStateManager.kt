@@ -52,6 +52,121 @@ data class InterceptEvent(
     val profileName: String
 )
 
+enum class NotificationPriorityLevel(
+    val rank: Int,
+    val label: String,
+    val badgeLabel: String,
+    val description: String
+) {
+    CRITICAL(
+        rank = 4,
+        label = "Critical",
+        badgeLabel = "P1 • CRITICAL",
+        description = "OTPs, 2FA security codes, ride/delivery tracking & emergency alerts"
+    ),
+    HIGH(
+        rank = 3,
+        label = "High",
+        badgeLabel = "P2 • HIGH",
+        description = "Direct messages, work chat mentions & calendar reminders"
+    ),
+    MEDIUM(
+        rank = 2,
+        label = "Medium",
+        badgeLabel = "P3 • MEDIUM",
+        description = "Social updates, group activity & general app notifications"
+    ),
+    LOW(
+        rank = 1,
+        label = "Low",
+        badgeLabel = "P4 • LOW",
+        description = "Promotions, shopping deals, newsletters & background digests"
+    )
+}
+
+enum class GlobalFocusRuleAction(
+    val label: String,
+    val shortLabel: String,
+    val badgeText: String,
+    val description: String
+) {
+    ALLOW_ALL(
+        label = "Allow Alert",
+        shortLabel = "Allow",
+        badgeText = "ALLOWED",
+        description = "Breaks through with normal banner & sound"
+    ),
+    MUTE_SILENT(
+        label = "Mute Audio",
+        shortLabel = "Mute",
+        badgeText = "MUTED",
+        description = "Silences sound & vibration, suppresses heads-up popup"
+    ),
+    HIDE_COMPLETELY(
+        label = "Hide Alert",
+        shortLabel = "Hide",
+        badgeText = "HIDDEN",
+        description = "Completely hides & dismisses alert from status bar"
+    )
+}
+
+enum class NotificationCategory(
+    val title: String,
+    val shortTitle: String,
+    val subtitle: String,
+    val defaultPriority: NotificationPriorityLevel
+) {
+    SECURITY_AND_URGENT(
+        title = "Security, OTP & Urgent",
+        shortTitle = "Security & OTP",
+        subtitle = "2FA codes, banking, rides & URGENT tags",
+        defaultPriority = NotificationPriorityLevel.CRITICAL
+    ),
+    DIRECT_MESSAGES(
+        title = "Direct Messages & Chats",
+        shortTitle = "Direct Messages",
+        subtitle = "WhatsApp, Telegram, Signal, SMS & DMs",
+        defaultPriority = NotificationPriorityLevel.HIGH
+    ),
+    WORK_AND_CALENDAR(
+        title = "Work, Tasks & Calendar",
+        shortTitle = "Work & Calendar",
+        subtitle = "Slack, Teams, Email, Jira & meetings",
+        defaultPriority = NotificationPriorityLevel.HIGH
+    ),
+    SOCIAL_AND_COMMUNITY(
+        title = "Social & Community",
+        shortTitle = "Social",
+        subtitle = "Instagram, X, Reddit, YouTube & groups",
+        defaultPriority = NotificationPriorityLevel.MEDIUM
+    ),
+    NEWS_AND_MEDIA(
+        title = "News, Media & Digests",
+        shortTitle = "News & Media",
+        subtitle = "Breaking news, podcasts & status updates",
+        defaultPriority = NotificationPriorityLevel.LOW
+    ),
+    PROMOTIONS_AND_DEALS(
+        title = "Promotions & Marketing",
+        shortTitle = "Promotions",
+        subtitle = "Shopping sales, coupons & store promos",
+        defaultPriority = NotificationPriorityLevel.LOW
+    )
+}
+
+data class CategorizedNotificationEvent(
+    val id: String = UUID.randomUUID().toString(),
+    val timestampMillis: Long = System.currentTimeMillis(),
+    val timeLabel: String,
+    val appName: String,
+    val packageName: String,
+    val title: String,
+    val previewText: String,
+    val category: NotificationCategory,
+    val priorityLevel: NotificationPriorityLevel,
+    val appliedAction: GlobalFocusRuleAction
+)
+
 data class FocusSessionState(
     val activeProfile: FocusProfile = FocusProfile.OFF,
     val expiresAtMillis: Long? = null,
@@ -90,7 +205,32 @@ data class FocusSessionState(
     val workScheduleEndHour: Int = 17,
     val workScheduleEndMinute: Int = 0,
     val workScheduleDays: Set<Int> = DEFAULT_WORK_DAYS,
-    val isAutoTriggeredByWorkSchedule: Boolean = false
+    val isAutoTriggeredByWorkSchedule: Boolean = false,
+    val sleepScheduleEnabled: Boolean = false,
+    val sleepScheduleStartHour: Int = 22,
+    val sleepScheduleStartMinute: Int = 30,
+    val sleepScheduleEndHour: Int = 7,
+    val sleepScheduleEndMinute: Int = 0,
+    val sleepScheduleDays: Set<Int> = DEFAULT_SLEEP_DAYS,
+    val isAutoTriggeredBySleepSchedule: Boolean = false,
+    val cinemaNotificationBlockingEnabled: Boolean = true,
+    val cinemaZeroVibrationEnabled: Boolean = true,
+    val cinemaExtraDimEnabled: Boolean = true,
+    val cinemaPresetMinutes: Int = 120,
+    val askBeforeGameActivation: Boolean = true,
+    val pendingGameActivationPackage: String? = null,
+    val pendingGameActivationLabel: String? = null,
+    val pendingGameCountdownSeconds: Int? = null,
+    val isPendingGamePreview: Boolean = false,
+    val activeGamePackage: String? = null,
+    val declinedGamePackageForSession: String? = null,
+    val manuallyDismissedGamingWhilstInGame: Boolean = false,
+    val globalFocusRulesEnabled: Boolean = true,
+    val enforceGlobalRulesWhenStandby: Boolean = false,
+    val priorityLevelRules: Map<NotificationPriorityLevel, GlobalFocusRuleAction> = DEFAULT_PRIORITY_LEVEL_RULES,
+    val categoryPriorityOverrides: Map<NotificationCategory, NotificationPriorityLevel> = DEFAULT_CATEGORY_PRIORITIES,
+    val categorizedNotifications: List<CategorizedNotificationEvent> = emptyList(),
+    val categoryInterceptCounts: Map<NotificationCategory, Int> = DEFAULT_CATEGORY_COUNTS
 ) {
     companion object {
         val DEFAULT_WORK_DAYS: Set<Int> = setOf(
@@ -99,6 +239,31 @@ data class FocusSessionState(
             java.util.Calendar.WEDNESDAY,
             java.util.Calendar.THURSDAY,
             java.util.Calendar.FRIDAY
+        )
+        val DEFAULT_SLEEP_DAYS: Set<Int> = setOf(
+            java.util.Calendar.SUNDAY,
+            java.util.Calendar.MONDAY,
+            java.util.Calendar.TUESDAY,
+            java.util.Calendar.WEDNESDAY,
+            java.util.Calendar.THURSDAY,
+            java.util.Calendar.FRIDAY,
+            java.util.Calendar.SATURDAY
+        )
+        val DEFAULT_PRIORITY_LEVEL_RULES: Map<NotificationPriorityLevel, GlobalFocusRuleAction> = mapOf(
+            NotificationPriorityLevel.CRITICAL to GlobalFocusRuleAction.ALLOW_ALL,
+            NotificationPriorityLevel.HIGH to GlobalFocusRuleAction.MUTE_SILENT,
+            NotificationPriorityLevel.MEDIUM to GlobalFocusRuleAction.HIDE_COMPLETELY,
+            NotificationPriorityLevel.LOW to GlobalFocusRuleAction.HIDE_COMPLETELY
+        )
+        val DEFAULT_CATEGORY_PRIORITIES: Map<NotificationCategory, NotificationPriorityLevel> =
+            NotificationCategory.values().associateWith { it.defaultPriority }
+        val DEFAULT_CATEGORY_COUNTS: Map<NotificationCategory, Int> = mapOf(
+            NotificationCategory.SECURITY_AND_URGENT to 3,
+            NotificationCategory.DIRECT_MESSAGES to 14,
+            NotificationCategory.WORK_AND_CALENDAR to 9,
+            NotificationCategory.SOCIAL_AND_COMMUNITY to 18,
+            NotificationCategory.NEWS_AND_MEDIA to 7,
+            NotificationCategory.PROMOTIONS_AND_DEALS to 12
         )
     }
 }
@@ -121,6 +286,29 @@ data class WeeklyShieldSummary(
     val averageCallsPerDay: Float = 0f
 )
 
+data class DailyGamingComparison(
+    val dayIndex: Int,
+    val dayKeyThisWeek: String,
+    val dayKeyLastWeek: String,
+    val dayShort: String,
+    val dayFullThisWeek: String,
+    val dayFullLastWeek: String,
+    val isToday: Boolean,
+    val thisWeekMinutes: Int,
+    val lastWeekMinutes: Int
+)
+
+data class GamingWeeklyComparisonSummary(
+    val days: List<DailyGamingComparison> = emptyList(),
+    val thisWeekTotalMinutes: Int = 0,
+    val lastWeekTotalMinutes: Int = 0,
+    val deltaMinutes: Int = 0,
+    val deltaPercentage: Float = 0f,
+    val peakDayThisWeekLabel: String = "N/A",
+    val peakDayThisWeekMinutes: Int = 0,
+    val averageDailyMinutesThisWeek: Float = 0f
+)
+
 class FocusStateManager private constructor(context: Context) {
 
     private val appContext = context.applicationContext
@@ -129,6 +317,7 @@ class FocusStateManager private constructor(context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var expirationJob: Job? = null
     private var gameExitDeactivationJob: Job? = null
+    private var gameLaunchConfirmationJob: Job? = null
     private var workScheduleWatcherJob: Job? = null
 
     private val _state = MutableStateFlow(loadInitialState())
@@ -140,7 +329,21 @@ class FocusStateManager private constructor(context: Context) {
     private val _weeklyStatsFlow = MutableStateFlow(calculateWeeklyStats())
     val weeklyStatsFlow: StateFlow<WeeklyShieldSummary> = _weeklyStatsFlow.asStateFlow()
 
+    private val _gamingWeeklyComparisonFlow = MutableStateFlow(calculateGamingWeeklyComparison())
+    val gamingWeeklyComparisonFlow: StateFlow<GamingWeeklyComparisonSummary> = _gamingWeeklyComparisonFlow.asStateFlow()
+
+    val focusHistoryRepository: FocusSessionHistoryRepository by lazy {
+        FocusSessionHistoryRepository(
+            FocusHistoryDatabase.getInstance(appContext).focusSessionHistoryDao()
+        )
+    }
+
     init {
+        scope.launch {
+            runCatching {
+                focusHistoryRepository.seedInitialSessionsIfEmpty()
+            }
+        }
         scope.launch {
             _state.collect { sessionState ->
                 if (_activeProfileFlow.value != sessionState.activeProfile) {
@@ -225,6 +428,45 @@ class FocusStateManager private constructor(context: Context) {
             ?.takeIf { it.isNotEmpty() } ?: FocusSessionState.DEFAULT_WORK_DAYS
         val isAutoWork = prefs.getBoolean(KEY_IS_AUTO_WORK_SCHEDULE, false)
 
+        val sleepSchedEnabled = prefs.getBoolean(KEY_SLEEP_SCHEDULE_ENABLED, false)
+        val sleepStartHour = prefs.getInt(KEY_SLEEP_START_HOUR, 22).coerceIn(0, 23)
+        val sleepStartMinute = prefs.getInt(KEY_SLEEP_START_MIN, 30).coerceIn(0, 59)
+        val sleepEndHour = prefs.getInt(KEY_SLEEP_END_HOUR, 7).coerceIn(0, 23)
+        val sleepEndMinute = prefs.getInt(KEY_SLEEP_END_MIN, 0).coerceIn(0, 59)
+        val sleepDaysRaw = prefs.getStringSet(KEY_SLEEP_SCHEDULE_DAYS, null)
+        val sleepDays = sleepDaysRaw?.mapNotNull { it.toIntOrNull() }?.toSet()
+            ?.takeIf { it.isNotEmpty() } ?: FocusSessionState.DEFAULT_SLEEP_DAYS
+        val isAutoSleep = prefs.getBoolean(KEY_IS_AUTO_SLEEP_SCHEDULE, false)
+
+        val cinemaNotifBlocking = prefs.getBoolean(KEY_CINEMA_NOTIF_BLOCKING, true)
+        val cinemaZeroVib = prefs.getBoolean(KEY_CINEMA_ZERO_VIBRATION, true)
+        val cinemaExtraDim = prefs.getBoolean(KEY_CINEMA_EXTRA_DIM, true)
+        val cinemaPresetMins = prefs.getInt(KEY_CINEMA_PRESET_MINS, 120)
+        val askBeforeGame = prefs.getBoolean(KEY_ASK_BEFORE_GAME_ACTIVATION, true)
+
+        val globalRulesEnabled = prefs.getBoolean(KEY_GLOBAL_FOCUS_RULES_ENABLED, true)
+        val enforceGlobalStandby = prefs.getBoolean(KEY_ENFORCE_GLOBAL_RULES_STANDBY, false)
+        val priorityRules = mutableMapOf<NotificationPriorityLevel, GlobalFocusRuleAction>()
+        for (level in NotificationPriorityLevel.values()) {
+            val defaultAction = FocusSessionState.DEFAULT_PRIORITY_LEVEL_RULES[level] ?: GlobalFocusRuleAction.MUTE_SILENT
+            val savedName = prefs.getString("key_priority_rule_${level.name}", defaultAction.name)
+            val resolved = runCatching { GlobalFocusRuleAction.valueOf(savedName ?: defaultAction.name) }.getOrDefault(defaultAction)
+            priorityRules[level] = resolved
+        }
+        val categoryPriorities = mutableMapOf<NotificationCategory, NotificationPriorityLevel>()
+        for (cat in NotificationCategory.values()) {
+            val defaultPriority = cat.defaultPriority
+            val savedPriority = prefs.getString("key_category_priority_${cat.name}", defaultPriority.name)
+            val resolved = runCatching { NotificationPriorityLevel.valueOf(savedPriority ?: defaultPriority.name) }.getOrDefault(defaultPriority)
+            categoryPriorities[cat] = resolved
+        }
+        val categoryCounts = mutableMapOf<NotificationCategory, Int>()
+        for (cat in NotificationCategory.values()) {
+            val defaultCount = FocusSessionState.DEFAULT_CATEGORY_COUNTS[cat] ?: 0
+            categoryCounts[cat] = prefs.getInt("key_category_count_${cat.name}", defaultCount)
+        }
+        val seedCategorized = createSeedCategorizedNotifications(categoryPriorities, priorityRules)
+
         // If saved session already expired in the past, reset to OFF and clean persistent state
         if (profile != FocusProfile.OFF && expiresAt != null && System.currentTimeMillis() >= expiresAt) {
             prefs.edit()
@@ -232,6 +474,7 @@ class FocusStateManager private constructor(context: Context) {
                 .remove(KEY_EXPIRES_AT)
                 .remove(KEY_SESSION_START)
                 .putBoolean(KEY_IS_AUTO_WORK_SCHEDULE, false)
+                .putBoolean(KEY_IS_AUTO_SLEEP_SCHEDULE, false)
                 .commit()
             return FocusSessionState(
                 activeProfile = FocusProfile.OFF,
@@ -269,7 +512,25 @@ class FocusStateManager private constructor(context: Context) {
                 workScheduleEndHour = workEndHour,
                 workScheduleEndMinute = workEndMinute,
                 workScheduleDays = workDays,
-                isAutoTriggeredByWorkSchedule = false
+                isAutoTriggeredByWorkSchedule = false,
+                sleepScheduleEnabled = sleepSchedEnabled,
+                sleepScheduleStartHour = sleepStartHour,
+                sleepScheduleStartMinute = sleepStartMinute,
+                sleepScheduleEndHour = sleepEndHour,
+                sleepScheduleEndMinute = sleepEndMinute,
+                sleepScheduleDays = sleepDays,
+                isAutoTriggeredBySleepSchedule = false,
+                cinemaNotificationBlockingEnabled = cinemaNotifBlocking,
+                cinemaZeroVibrationEnabled = cinemaZeroVib,
+                cinemaExtraDimEnabled = cinemaExtraDim,
+                cinemaPresetMinutes = cinemaPresetMins,
+                askBeforeGameActivation = askBeforeGame,
+                globalFocusRulesEnabled = globalRulesEnabled,
+                enforceGlobalRulesWhenStandby = enforceGlobalStandby,
+                priorityLevelRules = priorityRules,
+                categoryPriorityOverrides = categoryPriorities,
+                categorizedNotifications = seedCategorized,
+                categoryInterceptCounts = categoryCounts
             )
         }
 
@@ -309,7 +570,98 @@ class FocusStateManager private constructor(context: Context) {
             workScheduleEndHour = workEndHour,
             workScheduleEndMinute = workEndMinute,
             workScheduleDays = workDays,
-            isAutoTriggeredByWorkSchedule = isAutoWork
+            isAutoTriggeredByWorkSchedule = isAutoWork,
+            sleepScheduleEnabled = sleepSchedEnabled,
+            sleepScheduleStartHour = sleepStartHour,
+            sleepScheduleStartMinute = sleepStartMinute,
+            sleepScheduleEndHour = sleepEndHour,
+            sleepScheduleEndMinute = sleepEndMinute,
+            sleepScheduleDays = sleepDays,
+            isAutoTriggeredBySleepSchedule = isAutoSleep,
+            cinemaNotificationBlockingEnabled = cinemaNotifBlocking,
+            cinemaZeroVibrationEnabled = cinemaZeroVib,
+            cinemaExtraDimEnabled = cinemaExtraDim,
+            cinemaPresetMinutes = cinemaPresetMins,
+            askBeforeGameActivation = askBeforeGame,
+            globalFocusRulesEnabled = globalRulesEnabled,
+            enforceGlobalRulesWhenStandby = enforceGlobalStandby,
+            priorityLevelRules = priorityRules,
+            categoryPriorityOverrides = categoryPriorities,
+            categorizedNotifications = seedCategorized,
+            categoryInterceptCounts = categoryCounts
+        )
+    }
+
+    private fun createSeedCategorizedNotifications(
+        categoryPriorities: Map<NotificationCategory, NotificationPriorityLevel>,
+        priorityRules: Map<NotificationPriorityLevel, GlobalFocusRuleAction>
+    ): List<CategorizedNotificationEvent> {
+        val now = System.currentTimeMillis()
+        val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        fun buildSeed(
+            offsetMs: Long,
+            appName: String,
+            pkg: String,
+            title: String,
+            preview: String,
+            category: NotificationCategory
+        ): CategorizedNotificationEvent {
+            val priority = categoryPriorities[category] ?: category.defaultPriority
+            val action = priorityRules[priority] ?: GlobalFocusRuleAction.MUTE_SILENT
+            val ts = now - offsetMs
+            return CategorizedNotificationEvent(
+                timestampMillis = ts,
+                timeLabel = fmt.format(Date(ts)),
+                appName = appName,
+                packageName = pkg,
+                title = title,
+                previewText = preview,
+                category = category,
+                priorityLevel = priority,
+                appliedAction = action
+            )
+        }
+        return listOf(
+            buildSeed(
+                offsetMs = 95_000L,
+                appName = "Authenticator • 2FA",
+                pkg = "com.google.android.apps.authenticator2",
+                title = "Security Verification Code",
+                preview = "Your one-time login OTP code is 849-210. Expires in 5 minutes.",
+                category = NotificationCategory.SECURITY_AND_URGENT
+            ),
+            buildSeed(
+                offsetMs = 240_000L,
+                appName = "Slack Workspace",
+                pkg = "com.Slack",
+                title = "#release-ops • @channel",
+                preview = "Deployment pipeline verified for v2.4 build.",
+                category = NotificationCategory.WORK_AND_CALENDAR
+            ),
+            buildSeed(
+                offsetMs = 420_000L,
+                appName = "WhatsApp",
+                pkg = "com.whatsapp",
+                title = "Maya Lin",
+                preview = "Are we still meeting at 6:30 PM after your session?",
+                category = NotificationCategory.DIRECT_MESSAGES
+            ),
+            buildSeed(
+                offsetMs = 780_000L,
+                appName = "Instagram",
+                pkg = "com.instagram.android",
+                title = "alex_design and 14 others",
+                preview = "Liked your story highlight and left a comment.",
+                category = NotificationCategory.SOCIAL_AND_COMMUNITY
+            ),
+            buildSeed(
+                offsetMs = 1_150_000L,
+                appName = "Flash Deals Store",
+                pkg = "com.amazon.mShop.android.shopping",
+                title = "40% OFF Weekend Tech Sale",
+                preview = "Limited-time coupon expires at midnight tonight!",
+                category = NotificationCategory.PROMOTIONS_AND_DEALS
+            )
         )
     }
 
@@ -424,6 +776,9 @@ class FocusStateManager private constructor(context: Context) {
                 com.example.services.ZenShieldForegroundService.update(appContext)
             }
         }
+        runCatching {
+            com.example.widgets.SentinelWidgetProvider.updateAllWidgets(appContext)
+        }
     }
 
     fun toggleAutoReply(): Boolean {
@@ -446,6 +801,9 @@ class FocusStateManager private constructor(context: Context) {
             return perProfile
         }
         val template = _state.value.autoReplyMessageTemplate
+        if (profile == FocusProfile.CINEMA && template == DEFAULT_AUTO_REPLY_TEMPLATE) {
+            return DEFAULT_CINEMA_AUTO_REPLY
+        }
         return try {
             if (template.contains("%s")) {
                 String.format(template, profile.displayName)
@@ -615,13 +973,221 @@ class FocusStateManager private constructor(context: Context) {
         return gameExitDeactivationJob?.isActive == true
     }
 
-    fun handleGameLaunched(packageName: String) {
+    fun setAskBeforeGameActivationEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(askBeforeGameActivation = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_ASK_BEFORE_GAME_ACTIVATION, enabled).apply()
+        if (!enabled) {
+            cancelPendingGameActivationPrompt()
+        }
+    }
+
+    fun isAskBeforeGameActivationEnabled(): Boolean = _state.value.askBeforeGameActivation
+
+    /**
+     * Records that a game package is currently observed in the foreground so that if the user
+     * manually turns off Gaming Mode from the notification bar, Sentinal knows which game session
+     * to suppress until the user closes and relaunches that game.
+     */
+    fun notifyForegroundGameObserved(packageName: String) {
+        if (packageName.isBlank()) return
+        if (_state.value.activeGamePackage != packageName) {
+            _state.value = _state.value.copy(activeGamePackage = packageName)
+        }
+    }
+
+    /**
+     * Shows the dedicated Gaming Mode Auto-Activation Confirmation Pop-up with Activate and Not Now
+     * buttons and a 5-second auto-activate countdown. If the user does not tap Not Now before the
+     * 5-second timer completes, Gaming Mode activates automatically.
+     */
+    fun requestGameLaunchConfirmation(
+        packageName: String,
+        appLabel: String? = null,
+        countdownSeconds: Int = GAME_CONFIRMATION_COUNTDOWN_SECONDS,
+        isManualPreview: Boolean = false
+    ) {
         cancelGameExitedDeactivation()
         val current = _state.value
-        if (!current.autoGameDetectionEnabled) return
-        if (current.activeProfile == FocusProfile.GAMING) return
+        if (!isManualPreview) {
+            if (!current.autoGameDetectionEnabled) return
+            if (current.activeProfile == FocusProfile.GAMING) return
 
-        val prev = current.activeProfile
+            // Suppress re-asking during the same game session if the user tapped 'Not Now'
+            // or manually turned off Gaming Mode from the notification bar while in the game
+            if (current.declinedGamePackageForSession == packageName || current.manuallyDismissedGamingWhilstInGame) {
+                return
+            }
+        }
+
+        // If a confirmation prompt is already counting down for this exact game, keep it running
+        if (!isManualPreview && current.pendingGameActivationPackage == packageName && gameLaunchConfirmationJob?.isActive == true) {
+            return
+        }
+
+        val resolvedLabel = appLabel?.takeIf { it.isNotBlank() } ?: resolveReadableGameTitle(packageName)
+        val totalSeconds = countdownSeconds.coerceIn(1, 15)
+
+        gameLaunchConfirmationJob?.cancel()
+        _state.value = current.copy(
+            pendingGameActivationPackage = packageName,
+            pendingGameActivationLabel = resolvedLabel,
+            pendingGameCountdownSeconds = totalSeconds,
+            isPendingGamePreview = isManualPreview,
+            activeGamePackage = packageName
+        )
+
+        runCatching {
+            com.example.ui.GamingModePopupManager.showGamingActivationPrompt(
+                context = appContext,
+                packageName = packageName,
+                gameLabel = resolvedLabel,
+                remainingSeconds = totalSeconds
+            )
+        }
+
+        gameLaunchConfirmationJob = scope.launch {
+            for (remaining in totalSeconds downTo 1) {
+                _state.value = _state.value.copy(
+                    pendingGameActivationPackage = packageName,
+                    pendingGameActivationLabel = resolvedLabel,
+                    pendingGameCountdownSeconds = remaining,
+                    isPendingGamePreview = isManualPreview
+                )
+                runCatching {
+                    com.example.ui.GamingModePopupManager.updateGamingActivationPromptCountdown(
+                        context = appContext,
+                        packageName = packageName,
+                        gameLabel = resolvedLabel,
+                        remainingSeconds = remaining
+                    )
+                }
+                delay(1000L)
+            }
+            // Countdown reached 0 without user declining -> auto-activate Gaming Mode
+            confirmPendingGameActivation()
+        }
+    }
+
+    /**
+     * Immediately confirms the pending Gaming Mode launch prompt (either when the user taps
+     * "Activate" or when the 5-second countdown completes).
+     */
+    fun confirmPendingGameActivation() {
+        val current = _state.value
+        val pkg = current.pendingGameActivationPackage ?: current.activeGamePackage ?: "Game Session"
+        val wasManualPreview = current.isPendingGamePreview
+        gameLaunchConfirmationJob?.cancel()
+        gameLaunchConfirmationJob = null
+        _state.value = current.copy(
+            pendingGameActivationPackage = null,
+            pendingGameActivationLabel = null,
+            pendingGameCountdownSeconds = null,
+            isPendingGamePreview = false,
+            activeGamePackage = pkg,
+            declinedGamePackageForSession = null,
+            manuallyDismissedGamingWhilstInGame = false
+        )
+        runCatching {
+            com.example.ui.GamingModePopupManager.dismissGamingActivationPrompt(appContext)
+        }
+        handleGameLaunched(pkg, forceActivation = wasManualPreview)
+    }
+
+    /**
+     * Declines the pending Gaming Mode launch prompt when the user taps "Not Now",
+     * and suppresses asking again until the user closes/exits that game and relaunches it.
+     */
+    fun declinePendingGameActivation() {
+        val current = _state.value
+        val declinedPkg = current.pendingGameActivationPackage ?: current.activeGamePackage
+        gameLaunchConfirmationJob?.cancel()
+        gameLaunchConfirmationJob = null
+        _state.value = current.copy(
+            pendingGameActivationPackage = null,
+            pendingGameActivationLabel = null,
+            pendingGameCountdownSeconds = null,
+            isPendingGamePreview = false,
+            declinedGamePackageForSession = declinedPkg,
+            manuallyDismissedGamingWhilstInGame = true
+        )
+        Log.i(TAG, "User tapped Not Now on Gaming Mode prompt for $declinedPkg. Suppressing until game closes.")
+        runCatching {
+            com.example.ui.GamingModePopupManager.dismissGamingActivationPrompt(appContext)
+        }
+    }
+
+    fun cancelPendingGameActivationPrompt() {
+        if (gameLaunchConfirmationJob?.isActive == true || _state.value.pendingGameActivationPackage != null) {
+            gameLaunchConfirmationJob?.cancel()
+            gameLaunchConfirmationJob = null
+            _state.value = _state.value.copy(
+                pendingGameActivationPackage = null,
+                pendingGameActivationLabel = null,
+                pendingGameCountdownSeconds = null,
+                isPendingGamePreview = false
+            )
+            runCatching {
+                com.example.ui.GamingModePopupManager.dismissGamingActivationPrompt(appContext)
+            }
+        }
+    }
+
+    /**
+     * Resets the per-session 'Not Now' or manual notification-bar 'Turn Off' suppression
+     * once the user genuinely leaves/closes the game to another non-system app or launcher,
+     * so relaunching the game later will prompt or auto-activate again.
+     */
+    fun clearDeclinedGameSessionIfExited(currentForegroundPackage: String?) {
+        val current = _state.value
+        val declinedPkg = current.declinedGamePackageForSession
+        if (declinedPkg == null && !current.manuallyDismissedGamingWhilstInGame && current.activeGamePackage == null) {
+            return
+        }
+        // Ignore transient null polls or SystemUI (notification shade / heads-up banner interaction)
+        if (currentForegroundPackage.isNullOrBlank() ||
+            currentForegroundPackage == "com.android.systemui" ||
+            currentForegroundPackage == "android"
+        ) {
+            return
+        }
+        val trackedGamePkg = declinedPkg ?: current.activeGamePackage
+        if (trackedGamePkg == null || currentForegroundPackage != trackedGamePkg) {
+            Log.i(TAG, "Game ($trackedGamePkg) closed/left for '$currentForegroundPackage'. Resetting session suppression state.")
+            _state.value = current.copy(
+                declinedGamePackageForSession = null,
+                manuallyDismissedGamingWhilstInGame = false,
+                activeGamePackage = null
+            )
+        }
+    }
+
+    private fun resolveReadableGameTitle(packageName: String): String {
+        return try {
+            val pm = appContext.packageManager
+            val info = pm.getApplicationInfo(packageName, 0)
+            pm.getApplicationLabel(info).toString().takeIf { it.isNotBlank() }
+                ?: packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+        } catch (_: Exception) {
+            packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    fun handleGameLaunched(packageName: String, forceActivation: Boolean = false) {
+        cancelGameExitedDeactivation()
+        gameLaunchConfirmationJob?.cancel()
+        gameLaunchConfirmationJob = null
+        val current = _state.value
+        if (!forceActivation) {
+            if (!current.autoGameDetectionEnabled) return
+            if (current.activeProfile == FocusProfile.GAMING) return
+            if (current.declinedGamePackageForSession == packageName || current.manuallyDismissedGamingWhilstInGame) {
+                Log.i(TAG, "Suppressing handleGameLaunched for $packageName because user declined or turned off Gaming Mode for this session.")
+                return
+            }
+        }
+
+        val prev = if (current.activeProfile == FocusProfile.GAMING) current.previousProfileBeforeGame else current.activeProfile
         Log.i(TAG, "Game launched ($packageName). Auto-activating GAMING focus profile. Previous profile: ${prev.displayName}")
         val updated = current.copy(
             activeProfile = FocusProfile.GAMING,
@@ -631,13 +1197,23 @@ class FocusStateManager private constructor(context: Context) {
             durationOption = DurationOption.UNTIL_TURNED_OFF,
             expiresAtMillis = null,
             sessionStartTimeMillis = System.currentTimeMillis(),
-            gameExitCountdownSeconds = null
+            gameExitCountdownSeconds = null,
+            pendingGameActivationPackage = null,
+            pendingGameActivationLabel = null,
+            pendingGameCountdownSeconds = null,
+            isPendingGamePreview = false,
+            activeGamePackage = packageName,
+            declinedGamePackageForSession = null,
+            manuallyDismissedGamingWhilstInGame = false
         )
         _state.value = updated
         _activeProfileFlow.value = FocusProfile.GAMING
         persistState(updated)
         syncInterruptionFilter(FocusProfile.GAMING)
         applyFocusLockScreen(appContext, FocusProfile.GAMING, updated.dimLockScreenEnabled)
+        runCatching {
+            com.example.ui.GamingModePopupManager.dismissGamingActivationPrompt(appContext)
+        }
         runCatching {
             com.example.ui.GamingModePopupManager.showGamingModeActivatedPopup(appContext, packageName)
         }
@@ -647,12 +1223,23 @@ class FocusStateManager private constructor(context: Context) {
         runCatching {
             com.example.services.NotificationGuardService.ensureBound(appContext)
         }
+        runCatching {
+            com.example.services.QuickSettingsTileSync.requestSyncAllTiles(appContext)
+        }
     }
 
     fun handleGameExited() {
         cancelGameExitedDeactivation()
         val current = _state.value
         if (current.activeProfile != FocusProfile.GAMING) return
+
+        // Accrue elapsed Gaming Mode session duration (minimum 1 minute when a session ends)
+        val endedAt = System.currentTimeMillis()
+        current.sessionStartTimeMillis?.let { startedAt ->
+            val elapsedMinutes = ((endedAt - startedAt) / 60_000L).toInt().coerceAtLeast(1)
+            recordGamingSessionMinutes(elapsedMinutes, dayOffsetFromToday = 0)
+        }
+        recordCompletedFocusSessionToRoom(current, endedAt)
 
         val targetProfile = if (current.isAutoTriggeredByGame) {
             current.previousProfileBeforeGame
@@ -681,6 +1268,9 @@ class FocusStateManager private constructor(context: Context) {
                 com.example.services.ZenShieldForegroundService.stop(appContext)
             }
         }
+        runCatching {
+            com.example.services.QuickSettingsTileSync.requestSyncAllTiles(appContext)
+        }
     }
 
     fun getCallSharedPreferences(): SharedPreferences {
@@ -692,13 +1282,7 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     private fun normalizeCallerLookupKey(raw: String): String {
-        val trimmed = raw.trim().lowercase(Locale.ROOT)
-        val digitsOnly = trimmed.replace(Regex("[^0-9]"), "")
-        // When a phone number is present (7+ digits), normalize to trailing 9 digits so +1/0 prefixes match
-        if (digitsOnly.length >= 7) {
-            return digitsOnly.takeLast(9)
-        }
-        return trimmed
+        return SentinalRustCoreBridge.normalizeCallerLookupKey(raw)
     }
 
     fun checkVoipRepeatBreakthrough(callerName: String): Boolean {
@@ -807,17 +1391,45 @@ class FocusStateManager private constructor(context: Context) {
         duration: DurationOption = DurationOption.UNTIL_TURNED_OFF
     ) {
         if (profile == FocusProfile.OFF && _state.value.activeProfile == FocusProfile.OFF) {
+            if (_state.value.pendingGameActivationPackage != null) {
+                declinePendingGameActivation()
+            }
             runCatching {
                 com.example.services.ZenShieldForegroundService.stop(appContext)
             }
             return
         }
 
+        val currentBeforeChange = _state.value
+        val wasGaming = currentBeforeChange.activeProfile == FocusProfile.GAMING && profile != FocusProfile.GAMING
+        val hadPendingGamePrompt = currentBeforeChange.pendingGameActivationPackage != null && profile != FocusProfile.GAMING
+
         val now = System.currentTimeMillis()
+        // If transitioning out of an active GAMING session, accrue elapsed minutes into today's Gaming Mode total
+        if (wasGaming) {
+            currentBeforeChange.sessionStartTimeMillis?.let { startedAt ->
+                val elapsedMinutes = ((now - startedAt) / 60_000L).toInt()
+                if (elapsedMinutes >= 1) {
+                    recordGamingSessionMinutes(elapsedMinutes, dayOffsetFromToday = 0)
+                }
+            }
+        }
+        // Log any completed focus session into Room database when switching away or turning off
+        if (currentBeforeChange.activeProfile != FocusProfile.OFF && currentBeforeChange.activeProfile != profile) {
+            recordCompletedFocusSessionToRoom(currentBeforeChange, now)
+        }
+
         // If user manually turns off or switches away from a scheduled WORK session, mark the current work window as manually overridden
-        if (_state.value.activeProfile == FocusProfile.WORK && profile != FocusProfile.WORK && _state.value.workScheduleEnabled) {
+        if (currentBeforeChange.activeProfile == FocusProfile.WORK && profile != FocusProfile.WORK && currentBeforeChange.workScheduleEnabled) {
             computeActiveWorkScheduleWindow(now)?.let { (windowStart, _) ->
                 prefs.edit().putLong(KEY_DISMISSED_WORK_WINDOW_START, windowStart).apply()
+            }
+        }
+
+        // If user manually turns off or switches away from a scheduled SLEEP session, mark the current sleep window as manually overridden
+        if (currentBeforeChange.activeProfile == FocusProfile.SLEEP && profile != FocusProfile.SLEEP && currentBeforeChange.sleepScheduleEnabled) {
+            computeActiveSleepScheduleWindow(now)?.let { (windowStart, _) ->
+                prefs.edit().putLong(KEY_DISMISSED_SLEEP_WINDOW_START, windowStart).apply()
             }
         }
 
@@ -830,6 +1442,13 @@ class FocusStateManager private constructor(context: Context) {
         expirationJob?.cancel()
         expirationJob = null
         cancelGameExitedDeactivation()
+        if (profile != FocusProfile.GAMING) {
+            gameLaunchConfirmationJob?.cancel()
+            gameLaunchConfirmationJob = null
+            runCatching {
+                com.example.ui.GamingModePopupManager.dismissGamingActivationPrompt(appContext)
+            }
+        }
 
         if (profile != FocusProfile.OFF && expiresAt != null) {
             startExpirationCountdown(expiresAt)
@@ -840,6 +1459,25 @@ class FocusStateManager private constructor(context: Context) {
         // Clean repeat caller and auto-reply caches on every profile transition so testing or new sessions never block
         resetSessionCaches()
 
+        // When user manually turns off or switches away from Gaming Mode (e.g. from notification bar),
+        // record the active game session as declined so GameDetectorService will NOT re-enable Gaming Mode
+        // until the user closes and relaunches the game.
+        val suppressedGamePkg = if (wasGaming || hadPendingGamePrompt) {
+            currentBeforeChange.activeGamePackage
+                ?: currentBeforeChange.pendingGameActivationPackage
+                ?: currentBeforeChange.declinedGamePackageForSession
+        } else if (profile == FocusProfile.GAMING) {
+            null
+        } else {
+            currentBeforeChange.declinedGamePackageForSession
+        }
+
+        val suppressCurrentGameSession = when {
+            wasGaming || hadPendingGamePrompt -> true
+            profile == FocusProfile.GAMING -> false
+            else -> currentBeforeChange.manuallyDismissedGamingWhilstInGame
+        }
+
         // Preserve user's custom Call Bouncer & Notification toggles across all profile switches
         val updated = _state.value.copy(
             activeProfile = profile,
@@ -848,7 +1486,14 @@ class FocusStateManager private constructor(context: Context) {
             sessionStartTimeMillis = if (profile != FocusProfile.OFF) now else null,
             isAutoTriggeredByGame = false,
             previousProfileBeforeGame = FocusProfile.OFF,
-            isAutoTriggeredByWorkSchedule = false
+            isAutoTriggeredByWorkSchedule = false,
+            isAutoTriggeredBySleepSchedule = false,
+            pendingGameActivationPackage = if (profile != FocusProfile.GAMING) null else _state.value.pendingGameActivationPackage,
+            pendingGameActivationLabel = if (profile != FocusProfile.GAMING) null else _state.value.pendingGameActivationLabel,
+            pendingGameCountdownSeconds = if (profile != FocusProfile.GAMING) null else _state.value.pendingGameCountdownSeconds,
+            isPendingGamePreview = if (profile != FocusProfile.GAMING) false else _state.value.isPendingGamePreview,
+            declinedGamePackageForSession = suppressedGamePkg,
+            manuallyDismissedGamingWhilstInGame = suppressCurrentGameSession
         )
 
         _state.value = updated
@@ -888,6 +1533,9 @@ class FocusStateManager private constructor(context: Context) {
             runCatching {
                 com.example.services.ZenShieldForegroundService.stop(appContext)
             }
+        }
+        runCatching {
+            com.example.services.QuickSettingsTileSync.requestSyncAllTiles(appContext)
         }
     }
 
@@ -940,15 +1588,38 @@ class FocusStateManager private constructor(context: Context) {
             FocusProfile.GAMING -> FocusProfile.WORK
             FocusProfile.WORK -> FocusProfile.SLEEP
             FocusProfile.SLEEP -> FocusProfile.DO_NOT_DISTURB
+            FocusProfile.CINEMA -> FocusProfile.DO_NOT_DISTURB
             FocusProfile.OFF -> FocusProfile.DO_NOT_DISTURB
+        }
+
+        val leavingGaming = current.activeProfile == FocusProfile.GAMING && nextProfile != FocusProfile.GAMING
+        val suppressedGamePkg = if (leavingGaming) {
+            current.activeGamePackage ?: current.pendingGameActivationPackage ?: current.declinedGamePackageForSession
+        } else if (nextProfile == FocusProfile.GAMING) {
+            null
+        } else {
+            current.declinedGamePackageForSession
+        }
+
+        val now = System.currentTimeMillis()
+        if (current.activeProfile != FocusProfile.OFF && current.activeProfile != nextProfile) {
+            recordCompletedFocusSessionToRoom(current, now)
         }
 
         // Preserve user's custom Call Bouncer & Notification toggles across all profile switches
         val updated = current.copy(
             activeProfile = nextProfile,
+            sessionStartTimeMillis = now,
             isAutoTriggeredByGame = false,
             previousProfileBeforeGame = FocusProfile.OFF,
-            isAutoTriggeredByWorkSchedule = false
+            isAutoTriggeredByWorkSchedule = false,
+            isAutoTriggeredBySleepSchedule = false,
+            declinedGamePackageForSession = suppressedGamePkg,
+            manuallyDismissedGamingWhilstInGame = when {
+                leavingGaming -> true
+                nextProfile == FocusProfile.GAMING -> false
+                else -> current.manuallyDismissedGamingWhilstInGame
+            }
         )
         _state.value = updated
         _activeProfileFlow.value = nextProfile
@@ -968,6 +1639,9 @@ class FocusStateManager private constructor(context: Context) {
 
         runCatching {
             com.example.services.ZenShieldForegroundService.update(context)
+        }
+        runCatching {
+            com.example.services.QuickSettingsTileSync.requestSyncAllTiles(appContext)
         }
     }
 
@@ -1182,13 +1856,15 @@ class FocusStateManager private constructor(context: Context) {
     private fun startWorkScheduleWatcher() {
         workScheduleWatcherJob?.cancel()
         scheduleNextWorkScheduleAlarm()
+        scheduleNextSleepScheduleAlarm()
         workScheduleWatcherJob = scope.launch {
             while (isActive) {
                 try {
                     checkAndExpireIfNeeded()
                     evaluateWorkSchedule()
+                    evaluateSleepSchedule()
                 } catch (e: Exception) {
-                    Log.w(TAG, "Work schedule watcher check failed: ${e.message}")
+                    Log.w(TAG, "Schedule watcher check failed: ${e.message}")
                 }
                 delay(15_000L)
             }
@@ -1259,17 +1935,292 @@ class FocusStateManager private constructor(context: Context) {
         runCatching { alarmManager.cancel(pendingIntent) }
     }
 
+    // =========================================================================
+    // SLEEP FOCUS SCHEDULE ENGINE (MANUAL + AUTOMATED OVERNIGHT/DAILY SCHEDULE)
+    // =========================================================================
+
+    fun setSleepScheduleEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(sleepScheduleEnabled = enabled)
+        _state.value = updated
+        prefs.edit()
+            .putBoolean(KEY_SLEEP_SCHEDULE_ENABLED, enabled)
+            .remove(KEY_DISMISSED_SLEEP_WINDOW_START)
+            .apply()
+
+        if (enabled) {
+            evaluateSleepSchedule()
+            scheduleNextSleepScheduleAlarm()
+        } else {
+            cancelSleepScheduleAlarm()
+            if (updated.isAutoTriggeredBySleepSchedule && updated.activeProfile == FocusProfile.SLEEP) {
+                setProfile(FocusProfile.OFF)
+            }
+        }
+    }
+
+    fun setSleepScheduleTime(startHour: Int, startMinute: Int, endHour: Int, endMinute: Int) {
+        val sh = startHour.coerceIn(0, 23)
+        val sm = startMinute.coerceIn(0, 59)
+        val eh = endHour.coerceIn(0, 23)
+        val em = endMinute.coerceIn(0, 59)
+        val updated = _state.value.copy(
+            sleepScheduleStartHour = sh,
+            sleepScheduleStartMinute = sm,
+            sleepScheduleEndHour = eh,
+            sleepScheduleEndMinute = em
+        )
+        _state.value = updated
+        prefs.edit()
+            .putInt(KEY_SLEEP_START_HOUR, sh)
+            .putInt(KEY_SLEEP_START_MIN, sm)
+            .putInt(KEY_SLEEP_END_HOUR, eh)
+            .putInt(KEY_SLEEP_END_MIN, em)
+            .remove(KEY_DISMISSED_SLEEP_WINDOW_START)
+            .apply()
+
+        if (updated.sleepScheduleEnabled) {
+            evaluateSleepSchedule()
+            scheduleNextSleepScheduleAlarm()
+        }
+    }
+
+    fun toggleSleepScheduleDay(calendarDayOfWeek: Int) {
+        val currentDays = _state.value.sleepScheduleDays
+        val nextDays = if (currentDays.contains(calendarDayOfWeek)) {
+            if (currentDays.size > 1) currentDays - calendarDayOfWeek else currentDays
+        } else {
+            currentDays + calendarDayOfWeek
+        }
+        setSleepScheduleDays(nextDays)
+    }
+
+    fun setSleepScheduleDays(days: Set<Int>) {
+        if (days.isEmpty()) return
+        val updated = _state.value.copy(sleepScheduleDays = days)
+        _state.value = updated
+        prefs.edit()
+            .putStringSet(KEY_SLEEP_SCHEDULE_DAYS, days.map { it.toString() }.toSet())
+            .remove(KEY_DISMISSED_SLEEP_WINDOW_START)
+            .apply()
+
+        if (updated.sleepScheduleEnabled) {
+            evaluateSleepSchedule()
+            scheduleNextSleepScheduleAlarm()
+        }
+    }
+
     /**
-     * Restores an active focus session or scheduled Work Focus on device reboot/update
+     * Computes the active `[windowStartMillis, windowEndMillis)` if `nowMillis` falls inside
+     * a scheduled Sleep Focus window (supporting both overnight e.g. 22:30-07:00 and same-day e.g. 00:30-08:00).
+     */
+    fun computeActiveSleepScheduleWindow(nowMillis: Long = System.currentTimeMillis()): Pair<Long, Long>? {
+        val s = _state.value
+        if (!s.sleepScheduleEnabled || s.sleepScheduleDays.isEmpty()) return null
+
+        val startTotalMins = s.sleepScheduleStartHour * 60 + s.sleepScheduleStartMinute
+        val endTotalMins = s.sleepScheduleEndHour * 60 + s.sleepScheduleEndMinute
+        if (startTotalMins == endTotalMins) return null
+
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = nowMillis }
+        val currentDayOfWeek = nowCal.get(java.util.Calendar.DAY_OF_WEEK)
+        val currentMinsOfDay = nowCal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + nowCal.get(java.util.Calendar.MINUTE)
+
+        if (startTotalMins < endTotalMins) {
+            // Same-day sleep window (e.g., 00:30 to 08:00)
+            if (s.sleepScheduleDays.contains(currentDayOfWeek) && currentMinsOfDay in startTotalMins until endTotalMins) {
+                val startCal = (nowCal.clone() as java.util.Calendar).apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleStartHour)
+                    set(java.util.Calendar.MINUTE, s.sleepScheduleStartMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val endCal = (nowCal.clone() as java.util.Calendar).apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleEndHour)
+                    set(java.util.Calendar.MINUTE, s.sleepScheduleEndMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                return startCal.timeInMillis to endCal.timeInMillis
+            }
+        } else {
+            // Overnight sleep window (e.g., 22:30 to 07:00 next morning)
+            if (currentMinsOfDay >= startTotalMins && s.sleepScheduleDays.contains(currentDayOfWeek)) {
+                val startCal = (nowCal.clone() as java.util.Calendar).apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleStartHour)
+                    set(java.util.Calendar.MINUTE, s.sleepScheduleStartMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val endCal = (nowCal.clone() as java.util.Calendar).apply {
+                    add(java.util.Calendar.DAY_OF_YEAR, 1)
+                    set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleEndHour)
+                    set(java.util.Calendar.MINUTE, s.sleepScheduleEndMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                return startCal.timeInMillis to endCal.timeInMillis
+            } else if (currentMinsOfDay < endTotalMins) {
+                val yesterdayCal = (nowCal.clone() as java.util.Calendar).apply {
+                    add(java.util.Calendar.DAY_OF_YEAR, -1)
+                }
+                val yesterdayDow = yesterdayCal.get(java.util.Calendar.DAY_OF_WEEK)
+                if (s.sleepScheduleDays.contains(yesterdayDow)) {
+                    val startCal = (yesterdayCal.clone() as java.util.Calendar).apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleStartHour)
+                        set(java.util.Calendar.MINUTE, s.sleepScheduleStartMinute)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    val endCal = (nowCal.clone() as java.util.Calendar).apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleEndHour)
+                        set(java.util.Calendar.MINUTE, s.sleepScheduleEndMinute)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    return startCal.timeInMillis to endCal.timeInMillis
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Evaluates whether Sleep Focus should automatically activate at bedtime or expire at wake-up.
+     */
+    fun evaluateSleepSchedule(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val current = _state.value
+        if (!current.sleepScheduleEnabled) return false
+
+        val activeWindow = computeActiveSleepScheduleWindow(nowMillis)
+        if (activeWindow != null) {
+            val (windowStart, windowEnd) = activeWindow
+            val dismissedWindowStart = prefs.getLong(KEY_DISMISSED_SLEEP_WINDOW_START, -1L)
+            if (dismissedWindowStart == windowStart) {
+                // User manually dismissed this scheduled sleep window; respect their override
+                return false
+            }
+
+            if (current.activeProfile == FocusProfile.OFF) {
+                Log.i(TAG, "Scheduled Sleep Focus window active ($windowStart..$windowEnd). Auto-engaging SLEEP Focus.")
+                expirationJob?.cancel()
+                startExpirationCountdown(windowEnd)
+                resetSessionCaches()
+
+                val updated = current.copy(
+                    activeProfile = FocusProfile.SLEEP,
+                    expiresAtMillis = windowEnd,
+                    durationOption = DurationOption.UNTIL_TURNED_OFF,
+                    sessionStartTimeMillis = nowMillis,
+                    isAutoTriggeredBySleepSchedule = true,
+                    isAutoTriggeredByWorkSchedule = false,
+                    isAutoTriggeredByGame = false
+                )
+                _state.value = updated
+                _activeProfileFlow.value = FocusProfile.SLEEP
+                persistState(updated)
+                syncInterruptionFilter(FocusProfile.SLEEP)
+                applyFocusLockScreen(appContext, FocusProfile.SLEEP, updated.dimLockScreenEnabled)
+                runCatching { com.example.services.ZenShieldForegroundService.start(appContext) }
+                runCatching { com.example.services.NotificationGuardService.ensureBound(appContext) }
+                return true
+            } else if (current.activeProfile == FocusProfile.SLEEP && current.isAutoTriggeredBySleepSchedule && current.expiresAtMillis != windowEnd) {
+                // Update wake-up timestamp if user edited schedule wake-up time while active
+                expirationJob?.cancel()
+                startExpirationCountdown(windowEnd)
+                val updated = current.copy(expiresAtMillis = windowEnd)
+                _state.value = updated
+                persistState(updated)
+                runCatching { com.example.services.ZenShieldForegroundService.update(appContext) }
+                return true
+            }
+        } else {
+            // Outside scheduled window: if currently in auto-triggered Sleep Focus, deactivate cleanly at wake-up
+            if (current.activeProfile == FocusProfile.SLEEP && current.isAutoTriggeredBySleepSchedule) {
+                Log.i(TAG, "Scheduled Sleep Focus window ended. Deactivating SLEEP Focus.")
+                setProfile(FocusProfile.OFF)
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Schedules an exact Doze-safe AlarmManager wakeup at the next Sleep Focus bedtime or wake-up boundary.
+     */
+    fun scheduleNextSleepScheduleAlarm(nowMillis: Long = System.currentTimeMillis()) {
+        val s = _state.value
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, BootCompletedReceiver::class.java).apply {
+            action = BootCompletedReceiver.ACTION_EVALUATE_SLEEP_SCHEDULE
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            REQUEST_CODE_SLEEP_SCHEDULE_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        if (!s.sleepScheduleEnabled || s.sleepScheduleDays.isEmpty()) {
+            runCatching { alarmManager.cancel(pendingIntent) }
+            return
+        }
+
+        val activeWindow = computeActiveSleepScheduleWindow(nowMillis)
+        val nextTriggerMillis: Long? = if (activeWindow != null) {
+            activeWindow.second
+        } else {
+            // Find next upcoming bedtime within the next 8 days
+            var earliestStart: Long? = null
+            for (dayOffset in 0..7) {
+                val cal = java.util.Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    add(java.util.Calendar.DAY_OF_YEAR, dayOffset)
+                    set(java.util.Calendar.HOUR_OF_DAY, s.sleepScheduleStartHour)
+                    set(java.util.Calendar.MINUTE, s.sleepScheduleStartMinute)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }
+                val dow = cal.get(java.util.Calendar.DAY_OF_WEEK)
+                if (s.sleepScheduleDays.contains(dow) && cal.timeInMillis > nowMillis + 1000L) {
+                    earliestStart = cal.timeInMillis
+                    break
+                }
+            }
+            earliestStart
+        }
+
+        if (nextTriggerMillis != null) {
+            scheduleDozeSafeAlarm(alarmManager, nextTriggerMillis, pendingIntent)
+        }
+    }
+
+    private fun cancelSleepScheduleAlarm() {
+        val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, BootCompletedReceiver::class.java).apply {
+            action = BootCompletedReceiver.ACTION_EVALUATE_SLEEP_SCHEDULE
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            REQUEST_CODE_SLEEP_SCHEDULE_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        runCatching { alarmManager.cancel(pendingIntent) }
+    }
+
+    /**
+     * Restores an active focus session or scheduled Work/Sleep Focus on device reboot/update
      * without resetting the remaining countdown timer.
      */
     fun restoreAfterBootOrScheduleTick() {
         scheduleNextWorkScheduleAlarm()
+        scheduleNextSleepScheduleAlarm()
         if (checkAndExpireIfNeeded()) {
             evaluateWorkSchedule()
+            evaluateSleepSchedule()
             return
         }
-        if (evaluateWorkSchedule()) {
+        if (evaluateWorkSchedule() || evaluateSleepSchedule()) {
             return
         }
         val current = _state.value
@@ -1324,6 +2275,8 @@ class FocusStateManager private constructor(context: Context) {
             45 -> DurationOption.FOR_45_MINUTES
             60 -> DurationOption.FOR_ONE_HOUR
             120 -> DurationOption.FOR_TWO_HOURS
+            150 -> DurationOption.FOR_TWO_AND_HALF_HOURS
+            180 -> DurationOption.FOR_THREE_HOURS
             else -> current.durationOption
         }
 
@@ -1339,6 +2292,89 @@ class FocusStateManager private constructor(context: Context) {
                 com.example.services.ZenShieldForegroundService.update(appContext)
             }
         }
+    }
+
+    // =========================================================================
+    // CINEMA / MOVIE THEATER SHIELD ENGINE
+    // =========================================================================
+
+    fun setCinemaNotificationBlockingEnabled(enabled: Boolean) {
+        val current = _state.value
+        val updated = current.copy(
+            cinemaNotificationBlockingEnabled = enabled,
+            silenceNotifications = if (current.activeProfile == FocusProfile.CINEMA) enabled else current.silenceNotifications,
+            suppressHeadsUpBanners = if (current.activeProfile == FocusProfile.CINEMA && enabled) true else current.suppressHeadsUpBanners
+        )
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_CINEMA_NOTIF_BLOCKING, enabled).apply()
+        if (updated.activeProfile != FocusProfile.OFF) {
+            runCatching { com.example.services.ZenShieldForegroundService.update(appContext) }
+        }
+    }
+
+    fun setCinemaZeroVibrationEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(cinemaZeroVibrationEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_CINEMA_ZERO_VIBRATION, enabled).apply()
+    }
+
+    fun setCinemaExtraDimEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(
+            cinemaExtraDimEnabled = enabled,
+            dimLockScreenEnabled = if (_state.value.activeProfile == FocusProfile.CINEMA) enabled else _state.value.dimLockScreenEnabled
+        )
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_CINEMA_EXTRA_DIM, enabled).apply()
+        if (updated.activeProfile == FocusProfile.CINEMA) {
+            applyFocusLockScreen(appContext, FocusProfile.CINEMA, enabled)
+        }
+    }
+
+    fun setCinemaPresetMinutes(minutes: Int) {
+        val durationOption = when (minutes) {
+            120 -> DurationOption.FOR_TWO_HOURS
+            150 -> DurationOption.FOR_TWO_AND_HALF_HOURS
+            180 -> DurationOption.FOR_THREE_HOURS
+            0 -> DurationOption.UNTIL_TURNED_OFF
+            else -> DurationOption.FOR_TWO_HOURS
+        }
+        val current = _state.value
+        prefs.edit().putInt(KEY_CINEMA_PRESET_MINS, minutes).apply()
+
+        if (current.activeProfile == FocusProfile.CINEMA) {
+            setProfile(FocusProfile.CINEMA, durationOption)
+            _state.value = _state.value.copy(
+                cinemaPresetMinutes = minutes,
+                customDurationMinutes = if (minutes > 0) minutes else current.customDurationMinutes
+            )
+        } else {
+            val updated = current.copy(
+                cinemaPresetMinutes = minutes,
+                durationOption = durationOption,
+                customDurationMinutes = if (minutes > 0) minutes else current.customDurationMinutes
+            )
+            _state.value = updated
+            persistState(updated)
+        }
+    }
+
+    fun activateCinemaMode(presetMinutes: Int = _state.value.cinemaPresetMinutes) {
+        val durationOption = when (presetMinutes) {
+            120 -> DurationOption.FOR_TWO_HOURS
+            150 -> DurationOption.FOR_TWO_AND_HALF_HOURS
+            180 -> DurationOption.FOR_THREE_HOURS
+            0 -> DurationOption.UNTIL_TURNED_OFF
+            else -> DurationOption.FOR_TWO_HOURS
+        }
+        val current = _state.value
+        _state.value = current.copy(
+            cinemaPresetMinutes = presetMinutes,
+            customDurationMinutes = if (presetMinutes > 0) presetMinutes else current.customDurationMinutes,
+            silenceNotifications = current.cinemaNotificationBlockingEnabled,
+            suppressHeadsUpBanners = if (current.cinemaNotificationBlockingEnabled) true else current.suppressHeadsUpBanners,
+            dimLockScreenEnabled = current.cinemaExtraDimEnabled
+        )
+        setProfile(FocusProfile.CINEMA, durationOption)
     }
 
     fun setDimLockScreenEnabled(enabled: Boolean) {
@@ -1450,6 +2486,306 @@ class FocusStateManager private constructor(context: Context) {
         ExpressiveHaptics.playNotificationDismissed(appContext)
     }
 
+    // =========================================================================
+    // NOTIFICATION CATEGORIZATION & GLOBAL PRIORITY FOCUS RULES ENGINE
+    // =========================================================================
+
+    fun setGlobalFocusRulesEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(globalFocusRulesEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_GLOBAL_FOCUS_RULES_ENABLED, enabled).apply()
+    }
+
+    fun setEnforceGlobalRulesWhenStandby(enabled: Boolean) {
+        val updated = _state.value.copy(enforceGlobalRulesWhenStandby = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_ENFORCE_GLOBAL_RULES_STANDBY, enabled).apply()
+    }
+
+    fun setPriorityLevelRule(priority: NotificationPriorityLevel, action: GlobalFocusRuleAction) {
+        val current = _state.value
+        val updatedRules = current.priorityLevelRules.toMutableMap().apply {
+            put(priority, action)
+        }
+        val refreshedFeed = current.categorizedNotifications.map { item ->
+            if (item.priorityLevel == priority) {
+                item.copy(appliedAction = action)
+            } else {
+                item
+            }
+        }
+        val updated = current.copy(
+            priorityLevelRules = updatedRules,
+            categorizedNotifications = refreshedFeed
+        )
+        _state.value = updated
+        prefs.edit().putString("key_priority_rule_${priority.name}", action.name).apply()
+    }
+
+    fun applyGlobalFocusRulePreset(presetId: String) {
+        val newRules: Map<NotificationPriorityLevel, GlobalFocusRuleAction> = when (presetId.uppercase(Locale.ROOT)) {
+            "STRICT" -> mapOf(
+                NotificationPriorityLevel.CRITICAL to GlobalFocusRuleAction.MUTE_SILENT,
+                NotificationPriorityLevel.HIGH to GlobalFocusRuleAction.HIDE_COMPLETELY,
+                NotificationPriorityLevel.MEDIUM to GlobalFocusRuleAction.HIDE_COMPLETELY,
+                NotificationPriorityLevel.LOW to GlobalFocusRuleAction.HIDE_COMPLETELY
+            )
+            "URGENT_ONLY" -> mapOf(
+                NotificationPriorityLevel.CRITICAL to GlobalFocusRuleAction.ALLOW_ALL,
+                NotificationPriorityLevel.HIGH to GlobalFocusRuleAction.HIDE_COMPLETELY,
+                NotificationPriorityLevel.MEDIUM to GlobalFocusRuleAction.HIDE_COMPLETELY,
+                NotificationPriorityLevel.LOW to GlobalFocusRuleAction.HIDE_COMPLETELY
+            )
+            else -> FocusSessionState.DEFAULT_PRIORITY_LEVEL_RULES // "BALANCED"
+        }
+
+        val current = _state.value
+        val refreshedFeed = current.categorizedNotifications.map { item ->
+            val priority = current.categoryPriorityOverrides[item.category] ?: item.category.defaultPriority
+            val action = newRules[priority] ?: GlobalFocusRuleAction.MUTE_SILENT
+            item.copy(priorityLevel = priority, appliedAction = action)
+        }
+        val updated = current.copy(
+            priorityLevelRules = newRules,
+            categorizedNotifications = refreshedFeed
+        )
+        _state.value = updated
+        val editor = prefs.edit()
+        for ((level, action) in newRules) {
+            editor.putString("key_priority_rule_${level.name}", action.name)
+        }
+        editor.apply()
+    }
+
+    fun setCategoryPriorityLevel(category: NotificationCategory, priority: NotificationPriorityLevel) {
+        val current = _state.value
+        val updatedOverrides = current.categoryPriorityOverrides.toMutableMap().apply {
+            put(category, priority)
+        }
+        val effectiveAction = current.priorityLevelRules[priority] ?: GlobalFocusRuleAction.MUTE_SILENT
+        val refreshedFeed = current.categorizedNotifications.map { item ->
+            if (item.category == category) {
+                item.copy(priorityLevel = priority, appliedAction = effectiveAction)
+            } else {
+                item
+            }
+        }
+        val updated = current.copy(
+            categoryPriorityOverrides = updatedOverrides,
+            categorizedNotifications = refreshedFeed
+        )
+        _state.value = updated
+        prefs.edit().putString("key_category_priority_${category.name}", priority.name).apply()
+    }
+
+    fun cycleCategoryPriorityLevel(category: NotificationCategory): NotificationPriorityLevel {
+        val currentPriority = getPriorityForCategory(category)
+        val nextPriority = when (currentPriority) {
+            NotificationPriorityLevel.CRITICAL -> NotificationPriorityLevel.HIGH
+            NotificationPriorityLevel.HIGH -> NotificationPriorityLevel.MEDIUM
+            NotificationPriorityLevel.MEDIUM -> NotificationPriorityLevel.LOW
+            NotificationPriorityLevel.LOW -> NotificationPriorityLevel.CRITICAL
+        }
+        setCategoryPriorityLevel(category, nextPriority)
+        return nextPriority
+    }
+
+    fun getPriorityForCategory(category: NotificationCategory): NotificationPriorityLevel {
+        return _state.value.categoryPriorityOverrides[category] ?: category.defaultPriority
+    }
+
+    fun getRuleActionForPriority(priority: NotificationPriorityLevel): GlobalFocusRuleAction {
+        return _state.value.priorityLevelRules[priority] ?: GlobalFocusRuleAction.MUTE_SILENT
+    }
+
+    fun getEffectiveRuleForCategory(category: NotificationCategory): GlobalFocusRuleAction {
+        val priority = getPriorityForCategory(category)
+        return getRuleActionForPriority(priority)
+    }
+
+    /**
+     * Categorizes an incoming notification based on its package name, Android Notification.category,
+     * title, and text content.
+     */
+    fun classifyIncomingNotification(
+        packageName: String,
+        androidCategory: String?,
+        title: String,
+        text: String
+    ): NotificationCategory {
+        val pkg = packageName.lowercase(Locale.ROOT)
+        val combined = "$title $text".lowercase(Locale.ROOT)
+
+        // 1. Security, OTP, 2FA, Banking & Urgent keywords
+        val urgentOrSecurityKeywords = listOf(
+            "urgent", "emergency", "verification code", "security code", "one-time",
+            "otp", "2fa", "passcode", "auth code", "fraud alert", "bank", "driver arriving",
+            "delivery arriving", "your ride"
+        )
+        if (urgentOrSecurityKeywords.any { combined.contains(it) } ||
+            pkg.contains("authenticator") || pkg.contains("1password") || pkg.contains("bitwarden") ||
+            androidCategory == android.app.Notification.CATEGORY_ALARM
+        ) {
+            return NotificationCategory.SECURITY_AND_URGENT
+        }
+
+        // 2. Work, Tasks & Calendar
+        val workKeywords = listOf("slack", "teams", "outlook", "gmail", "calendar", "jira", "notion", "asana", "linear", "zoom", "meet")
+        if (workKeywords.any { pkg.contains(it) } ||
+            androidCategory == android.app.Notification.CATEGORY_EVENT ||
+            androidCategory == android.app.Notification.CATEGORY_REMINDER ||
+            androidCategory == android.app.Notification.CATEGORY_EMAIL ||
+            combined.contains("meeting in ") || combined.contains("pull request") || combined.contains("standup")
+        ) {
+            return NotificationCategory.WORK_AND_CALENDAR
+        }
+
+        // 3. Direct Messages & Chats
+        val messagingPackages = listOf(
+            "whatsapp", "telegram", "signal", "mms", "messaging", "orca", "discord", "viber", "line"
+        )
+        if (messagingPackages.any { pkg.contains(it) } ||
+            androidCategory == android.app.Notification.CATEGORY_MESSAGE
+        ) {
+            return NotificationCategory.DIRECT_MESSAGES
+        }
+
+        // 4. Promotions, Shopping & Deals
+        val promoKeywords = listOf(
+            "% off", "sale", "deal", "coupon", "promo", "discount", "limited time",
+            "free shipping", "cashback", "black friday", "flash sale", "Unsubscribe"
+        )
+        val shoppingPackages = listOf("amazon", "ebay", "shopify", "aliexpress", "temu", "shein", "walmart", "target")
+        if (androidCategory == android.app.Notification.CATEGORY_PROMO ||
+            promoKeywords.any { combined.contains(it.lowercase(Locale.ROOT)) } ||
+            shoppingPackages.any { pkg.contains(it) }
+        ) {
+            return NotificationCategory.PROMOTIONS_AND_DEALS
+        }
+
+        // 5. Social & Community
+        val socialPackages = listOf("instagram", "twitter", "zhiliaoapp", "tiktok", "reddit", "facebook", "snapchat", "threads", "youtube", "linkedin")
+        if (androidCategory == android.app.Notification.CATEGORY_SOCIAL ||
+            socialPackages.any { pkg.contains(it) } ||
+            combined.contains("liked your") || combined.contains("commented on") || combined.contains("started following")
+        ) {
+            return NotificationCategory.SOCIAL_AND_COMMUNITY
+        }
+
+        // 6. Default to News, Media & Digests
+        return NotificationCategory.NEWS_AND_MEDIA
+    }
+
+    /**
+     * Classifies an incoming notification, determines its user-configured priority level and
+     * global focus rule action (ALLOW_ALL, MUTE_SILENT, HIDE_COMPLETELY), records it in the
+     * categorized stream, and returns the action for NotificationGuardService to enforce.
+     */
+    fun evaluateAndRecordCategorizedNotification(
+        packageName: String,
+        appLabel: String,
+        androidCategory: String?,
+        title: String,
+        text: String
+    ): GlobalFocusRuleAction {
+        val category = classifyIncomingNotification(packageName, androidCategory, title, text)
+        val priority = getPriorityForCategory(category)
+        val action = getRuleActionForPriority(priority)
+
+        val now = System.currentTimeMillis()
+        val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(now))
+        val event = CategorizedNotificationEvent(
+            timestampMillis = now,
+            timeLabel = timeStr,
+            appName = appLabel.ifBlank { packageName },
+            packageName = packageName,
+            title = title.ifBlank { category.shortTitle },
+            previewText = text.ifBlank { "Categorized as ${category.shortTitle} (${priority.label} priority)" },
+            category = category,
+            priorityLevel = priority,
+            appliedAction = action
+        )
+
+        val current = _state.value
+        val newCategoryCount = (current.categoryInterceptCounts[category] ?: 0) + 1
+        val updatedCounts = current.categoryInterceptCounts.toMutableMap().apply {
+            put(category, newCategoryCount)
+        }
+        val updatedFeed = (listOf(event) + current.categorizedNotifications).take(25)
+
+        _state.value = current.copy(
+            categorizedNotifications = updatedFeed,
+            categoryInterceptCounts = updatedCounts
+        )
+        prefs.edit().putInt("key_category_count_${category.name}", newCategoryCount).apply()
+
+        return action
+    }
+
+    /**
+     * Simulates an incoming notification for a specific category so the user can test their
+     * Priority Level & Global Focus Rules in real time from the dashboard.
+     */
+    fun simulateCategorizedNotification(category: NotificationCategory): CategorizedNotificationEvent {
+        val (pkg, appName, sampleTitle, sampleText) = when (category) {
+            NotificationCategory.SECURITY_AND_URGENT -> listOf(
+                "com.google.android.apps.authenticator2",
+                "Security Shield 2FA",
+                "Login Verification OTP: 492-817",
+                "URGENT: Use code 492-817 to verify your sign-in."
+            )
+            NotificationCategory.DIRECT_MESSAGES -> listOf(
+                "com.whatsapp",
+                "WhatsApp • Direct Message",
+                "Liam Carter",
+                "Hey! Let me know when your focus block wraps up."
+            )
+            NotificationCategory.WORK_AND_CALENDAR -> listOf(
+                "com.Slack",
+                "Slack • #engineering",
+                "Sprint Planning Reminder",
+                "Meeting in 10 minutes • Architecture review deck attached."
+            )
+            NotificationCategory.SOCIAL_AND_COMMUNITY -> listOf(
+                "com.instagram.android",
+                "Instagram",
+                "design_daily & 8 others",
+                "Liked your post and mentioned you in a story."
+            )
+            NotificationCategory.NEWS_AND_MEDIA -> listOf(
+                "com.google.android.apps.magazines",
+                "Daily Tech Briefing",
+                "Evening Digest Ready",
+                "Top 5 stories in Android & systems engineering today."
+            )
+            NotificationCategory.PROMOTIONS_AND_DEALS -> listOf(
+                "com.amazon.mShop.android.shopping",
+                "Shopping Deals",
+                "Flash Sale: 50% Off Accessories",
+                "Use promo code FOCUS50 before midnight for free shipping."
+            )
+        }
+
+        val action = evaluateAndRecordCategorizedNotification(
+            packageName = pkg,
+            appLabel = appName,
+            androidCategory = null,
+            title = sampleTitle,
+            text = sampleText
+        )
+
+        if (action != GlobalFocusRuleAction.ALLOW_ALL) {
+            incrementShieldedNotification(
+                sourceApp = "$appName • $sampleTitle",
+                detail = "${action.badgeText} by Global Rule (${category.shortTitle} → ${getPriorityForCategory(category).label})"
+            )
+        } else {
+            ExpressiveHaptics.playSpringTap(appContext)
+        }
+
+        return _state.value.categorizedNotifications.first()
+    }
+
     fun dismissInterceptEvent(eventId: String) {
         val current = _state.value
         val filtered = current.recentIntercepts.filterNot { it.id == eventId }
@@ -1539,6 +2875,123 @@ class FocusStateManager private constructor(context: Context) {
             peakDayLabel = peakDay,
             averageSilencedPerDay = sumNotifs / 7f,
             averageCallsPerDay = sumCalls / 7f
+        )
+    }
+
+    fun getGamingWeeklyComparison(): GamingWeeklyComparisonSummary = calculateGamingWeeklyComparison()
+
+    /**
+     * Records additional minutes spent in Gaming Mode for a given day offset (`0` = today,
+     * `1..6` = earlier this week, `7..13` = corresponding day last week) and updates
+     * `gamingWeeklyComparisonFlow`.
+     */
+    fun recordGamingSessionMinutes(minutesToAdd: Int, dayOffsetFromToday: Int = 0) {
+        if (minutesToAdd <= 0) return
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val cal = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, -dayOffsetFromToday.coerceIn(0, 30))
+        }
+        val dateKey = keyFormat.format(cal.time)
+        val prefKey = "daily_gaming_mins_$dateKey"
+        val currentMins = prefs.getInt(prefKey, 0)
+        prefs.edit().putInt(prefKey, currentMins + minutesToAdd).apply()
+        _gamingWeeklyComparisonFlow.value = calculateGamingWeeklyComparison()
+    }
+
+    /**
+     * Computes the 7-day Gaming Mode duration summary comparing This Week (last 7 days)
+     * against Last Week (prior 7 days).
+     */
+    fun calculateGamingWeeklyComparison(): GamingWeeklyComparisonSummary {
+        val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
+        val fullFormat = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val todayKey = keyFormat.format(Date())
+
+        // Realistic baseline minutes per day for This Week vs Last Week when not yet recorded
+        val baselineThisWeekMins = listOf(45, 75, 60, 95, 130, 165, 85)
+        val baselineLastWeekMins = listOf(60, 50, 80, 70, 110, 140, 65)
+
+        val comparisonDays = mutableListOf<DailyGamingComparison>()
+        var sumThisWeek = 0
+        var sumLastWeek = 0
+        var peakDayLabel = "None"
+        var peakDayMins = -1
+
+        for (i in 6 downTo 0) {
+            val idx = 6 - i
+            val thisWeekCal = java.util.Calendar.getInstance().apply {
+                add(java.util.Calendar.DAY_OF_YEAR, -i)
+            }
+            val lastWeekCal = java.util.Calendar.getInstance().apply {
+                add(java.util.Calendar.DAY_OF_YEAR, -(i + 7))
+            }
+
+            val keyThis = keyFormat.format(thisWeekCal.time)
+            val keyLast = keyFormat.format(lastWeekCal.time)
+            val isToday = (keyThis == todayKey)
+
+            val prefKeyThis = "daily_gaming_mins_$keyThis"
+            val prefKeyLast = "daily_gaming_mins_$keyLast"
+
+            val minsThis = if (prefs.contains(prefKeyThis)) {
+                prefs.getInt(prefKeyThis, 0)
+            } else {
+                val seed = baselineThisWeekMins.getOrElse(idx) { 60 }
+                prefs.edit().putInt(prefKeyThis, seed).apply()
+                seed
+            }
+
+            val minsLast = if (prefs.contains(prefKeyLast)) {
+                prefs.getInt(prefKeyLast, 0)
+            } else {
+                val seed = baselineLastWeekMins.getOrElse(idx) { 55 }
+                prefs.edit().putInt(prefKeyLast, seed).apply()
+                seed
+            }
+
+            val dayShort = dayFormat.format(thisWeekCal.time)
+            val dayFullThis = fullFormat.format(thisWeekCal.time)
+            val dayFullLast = fullFormat.format(lastWeekCal.time)
+
+            comparisonDays.add(
+                DailyGamingComparison(
+                    dayIndex = idx,
+                    dayKeyThisWeek = keyThis,
+                    dayKeyLastWeek = keyLast,
+                    dayShort = dayShort,
+                    dayFullThisWeek = dayFullThis,
+                    dayFullLastWeek = dayFullLast,
+                    isToday = isToday,
+                    thisWeekMinutes = minsThis,
+                    lastWeekMinutes = minsLast
+                )
+            )
+
+            sumThisWeek += minsThis
+            sumLastWeek += minsLast
+            if (minsThis > peakDayMins) {
+                peakDayMins = minsThis
+                peakDayLabel = dayShort
+            }
+        }
+
+        val deltaMins = sumThisWeek - sumLastWeek
+        val deltaPct = if (sumLastWeek > 0) {
+            (deltaMins.toFloat() / sumLastWeek.toFloat()) * 100f
+        } else {
+            0f
+        }
+
+        return GamingWeeklyComparisonSummary(
+            days = comparisonDays,
+            thisWeekTotalMinutes = sumThisWeek,
+            lastWeekTotalMinutes = sumLastWeek,
+            deltaMinutes = deltaMins,
+            deltaPercentage = deltaPct,
+            peakDayThisWeekLabel = peakDayLabel,
+            peakDayThisWeekMinutes = peakDayMins.coerceAtLeast(0),
+            averageDailyMinutesThisWeek = sumThisWeek / 7f
         )
     }
 
@@ -1819,9 +3272,40 @@ class FocusStateManager private constructor(context: Context) {
                 drawCrescentPath(canvas, bx, by, br, badgeIconPaint)
                 canvas.drawText("SLEEP", bx, by + width * 0.062f, badgeTextPaint)
             }
+
+            FocusProfile.CINEMA -> {
+                // Ultra-Dim 95% Theater Blackout with Warm Amber Low-Luminance Clapperboard / Reel Emblem
+                val cinemaStrokePaint = Paint(primaryStrokePaint).apply {
+                    color = android.graphics.Color.parseColor("#3D2E14")
+                }
+                val cinemaBadgePaint = Paint(badgeStrokePaint).apply {
+                    color = android.graphics.Color.parseColor("#8A6B32")
+                }
+                val cinemaTextPaint = Paint(badgeTextPaint).apply {
+                    color = android.graphics.Color.parseColor("#8A6B32")
+                }
+                drawCinemaReelEmblem(canvas, cx, cy, r, cinemaStrokePaint)
+                drawFourPointStar(canvas, sx, sy, sr, secondaryStrokePaint)
+                drawCinemaReelEmblem(canvas, bx, by, br * 1.1f, cinemaBadgePaint)
+                canvas.drawText("CINEMA", bx, by + width * 0.062f, cinemaTextPaint)
+            }
         }
 
         return bitmap
+    }
+
+    private fun drawCinemaReelEmblem(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
+        // Outer cinema film reel circle
+        canvas.drawCircle(cx, cy, radius, paint)
+        // Inner hub
+        canvas.drawCircle(cx, cy, radius * 0.24f, paint)
+        // 4 film sprocket chambers
+        val offset = radius * 0.54f
+        val holeR = radius * 0.16f
+        canvas.drawCircle(cx, cy - offset, holeR, paint)
+        canvas.drawCircle(cx, cy + offset, holeR, paint)
+        canvas.drawCircle(cx - offset, cy, holeR, paint)
+        canvas.drawCircle(cx + offset, cy, holeR, paint)
     }
 
     private fun drawCrescentPath(canvas: Canvas, cx: Float, cy: Float, radius: Float, paint: Paint) {
@@ -1935,6 +3419,27 @@ class FocusStateManager private constructor(context: Context) {
             .putInt(KEY_WORK_END_MIN, state.workScheduleEndMinute)
             .putStringSet(KEY_WORK_SCHEDULE_DAYS, state.workScheduleDays.map { it.toString() }.toSet())
             .putBoolean(KEY_IS_AUTO_WORK_SCHEDULE, state.isAutoTriggeredByWorkSchedule)
+            .putBoolean(KEY_SLEEP_SCHEDULE_ENABLED, state.sleepScheduleEnabled)
+            .putInt(KEY_SLEEP_START_HOUR, state.sleepScheduleStartHour)
+            .putInt(KEY_SLEEP_START_MIN, state.sleepScheduleStartMinute)
+            .putInt(KEY_SLEEP_END_HOUR, state.sleepScheduleEndHour)
+            .putInt(KEY_SLEEP_END_MIN, state.sleepScheduleEndMinute)
+            .putStringSet(KEY_SLEEP_SCHEDULE_DAYS, state.sleepScheduleDays.map { it.toString() }.toSet())
+            .putBoolean(KEY_IS_AUTO_SLEEP_SCHEDULE, state.isAutoTriggeredBySleepSchedule)
+            .putBoolean(KEY_CINEMA_NOTIF_BLOCKING, state.cinemaNotificationBlockingEnabled)
+            .putBoolean(KEY_CINEMA_ZERO_VIBRATION, state.cinemaZeroVibrationEnabled)
+            .putBoolean(KEY_CINEMA_EXTRA_DIM, state.cinemaExtraDimEnabled)
+            .putInt(KEY_CINEMA_PRESET_MINS, state.cinemaPresetMinutes)
+            .putBoolean(KEY_ASK_BEFORE_GAME_ACTIVATION, state.askBeforeGameActivation)
+            .putBoolean(KEY_GLOBAL_FOCUS_RULES_ENABLED, state.globalFocusRulesEnabled)
+            .putBoolean(KEY_ENFORCE_GLOBAL_RULES_STANDBY, state.enforceGlobalRulesWhenStandby)
+
+        for ((level, action) in state.priorityLevelRules) {
+            editor.putString("key_priority_rule_${level.name}", action.name)
+        }
+        for ((cat, priority) in state.categoryPriorityOverrides) {
+            editor.putString("key_category_priority_${cat.name}", priority.name)
+        }
 
         if (state.expiresAtMillis != null && state.expiresAtMillis > System.currentTimeMillis() && state.activeProfile != FocusProfile.OFF) {
             editor.putLong(KEY_EXPIRES_AT, state.expiresAtMillis)
@@ -1949,9 +3454,47 @@ class FocusStateManager private constructor(context: Context) {
         }
 
         editor.commit()
+        runCatching {
+            com.example.widgets.SentinelWidgetProvider.updateAllWidgets(appContext)
+        }
+    }
+
+    private fun recordCompletedFocusSessionToRoom(
+        previousState: FocusSessionState,
+        endedAtMillis: Long
+    ) {
+        val profile = previousState.activeProfile
+        if (profile == FocusProfile.OFF) return
+        val startedAt = previousState.sessionStartTimeMillis ?: (endedAtMillis - 60_000L)
+        val elapsedMinutes = ((endedAtMillis - startedAt) / 60_000L).toInt().coerceAtLeast(1)
+        val triggerSource = when {
+            previousState.isAutoTriggeredByGame -> "Auto Game Detector"
+            previousState.isAutoTriggeredByWorkSchedule || previousState.isAutoTriggeredBySleepSchedule -> "Scheduled"
+            else -> "Manual"
+        }
+        scope.launch {
+            runCatching {
+                focusHistoryRepository.logSession(
+                    profile = profile,
+                    startTimeMillis = startedAt,
+                    endTimeMillis = endedAtMillis,
+                    durationMinutesOverride = elapsedMinutes,
+                    triggerSource = triggerSource
+                )
+            }
+        }
     }
 
     companion object {
+        fun getActiveProfile(context: Context): FocusProfile {
+            return getInstance(context).getActiveProfile()
+        }
+
+        fun isCinemaZeroVibrationActive(context: Context): Boolean {
+            val s = getInstance(context).state.value
+            return s.activeProfile == FocusProfile.CINEMA && s.cinemaZeroVibrationEnabled
+        }
+
         fun isAutoReplyEnabled(context: Context): Boolean {
             return getInstance(context).isAutoReplyEnabled()
         }
@@ -1976,8 +3519,10 @@ class FocusStateManager private constructor(context: Context) {
         const val AUTO_REPLY_COOLDOWN_MS = THREE_MINUTES_MS // 3-minute per-caller cooldown for declined call auto-replies
         const val THIRTY_MINUTES_MS = THREE_MINUTES_MS
         const val GAME_EXIT_DEACTIVATION_DELAY_MS = 15_000L // 15-second grace period after exiting a game
+        const val GAME_CONFIRMATION_COUNTDOWN_SECONDS = 5 // 5-second auto-activate countdown on game launch prompt
         const val OUTGOING_CALL_COOLDOWN_MS = 600_000L // 10 minutes
         const val DEFAULT_AUTO_REPLY_TEMPLATE = "🛡️ Sentinal: I currently have %s Focus active and notifications are silenced. Reply 'URGENT' to break through immediately."
+        const val DEFAULT_CINEMA_AUTO_REPLY = "🍿 Sentinel: I'm currently in a movie theater and my phone is on silent. I'll get back to you when the film ends."
 
         private const val KEY_ACTIVE_PROFILE = "key_active_profile"
         private const val KEY_EXPIRES_AT = "key_expires_at"
@@ -2016,8 +3561,24 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_WORK_SCHEDULE_DAYS = "key_work_schedule_days"
         private const val KEY_IS_AUTO_WORK_SCHEDULE = "key_is_auto_work_schedule"
         private const val KEY_DISMISSED_WORK_WINDOW_START = "key_dismissed_work_window_start"
+        private const val KEY_SLEEP_SCHEDULE_ENABLED = "key_sleep_schedule_enabled"
+        private const val KEY_SLEEP_START_HOUR = "key_sleep_start_hour"
+        private const val KEY_SLEEP_START_MIN = "key_sleep_start_min"
+        private const val KEY_SLEEP_END_HOUR = "key_sleep_end_hour"
+        private const val KEY_SLEEP_END_MIN = "key_sleep_end_min"
+        private const val KEY_SLEEP_SCHEDULE_DAYS = "key_sleep_schedule_days"
+        private const val KEY_IS_AUTO_SLEEP_SCHEDULE = "key_is_auto_sleep_schedule"
+        private const val KEY_DISMISSED_SLEEP_WINDOW_START = "key_dismissed_sleep_window_start"
+        private const val KEY_CINEMA_NOTIF_BLOCKING = "key_cinema_notif_blocking"
+        private const val KEY_CINEMA_ZERO_VIBRATION = "key_cinema_zero_vibration"
+        private const val KEY_CINEMA_EXTRA_DIM = "key_cinema_extra_dim"
+        private const val KEY_CINEMA_PRESET_MINS = "key_cinema_preset_mins"
+        private const val KEY_ASK_BEFORE_GAME_ACTIVATION = "key_ask_before_game_activation"
+        private const val KEY_GLOBAL_FOCUS_RULES_ENABLED = "key_global_focus_rules_enabled"
+        private const val KEY_ENFORCE_GLOBAL_RULES_STANDBY = "key_enforce_global_rules_standby"
         private const val REQUEST_CODE_EXPIRATION_ALARM = 9401
         private const val REQUEST_CODE_WORK_SCHEDULE_ALARM = 9402
+        private const val REQUEST_CODE_SLEEP_SCHEDULE_ALARM = 9403
 
         @Volatile
         private var INSTANCE: FocusStateManager? = null

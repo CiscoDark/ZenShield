@@ -4,10 +4,10 @@
     android:layout_height="wrap_content"
     android:background="@drawable/notification_hud_card_bg"
     android:orientation="vertical"
-    android:paddingStart="12dp"
-    android:paddingTop="8dp"
-    android:paddingEnd="12dp"
-    android:paddingBottom="8dp">
+    android:paddingStart="14dp"
+    android:paddingTop="10dp"
+    android:paddingEnd="14dp"
+    android:paddingBottom="10dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -15,15 +15,17 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <!-- App / Mode Icon -->
+        <!-- Material 3 Tonal Primary Icon Emblem -->
         <ImageView
             android:id="@+id/iv_icon"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:layout_marginEnd="10dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/notification_chip_bg"
             android:contentDescription="@string/app_name"
+            android:padding="6dp"
             android:src="@drawable/ic_launcher_monochrome"
-            android:tint="#38EF7D" />
+            android:tint="#D3E3FD" />
 
         <!-- Title, Live Timer & Telemetry Summary Column -->
         <LinearLayout
@@ -42,15 +44,15 @@
                     android:id="@+id/tv_live_badge"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
+                    android:layout_marginEnd="8dp"
                     android:background="@drawable/notification_chip_bg"
-                    android:paddingStart="6dp"
-                    android:paddingTop="1dp"
-                    android:paddingEnd="6dp"
-                    android:paddingBottom="1dp"
-                    android:text="LIVE"
-                    android:textColor="#38EF7D"
-                    android:textSize="9sp"
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="2dp"
+                    android:text="Active"
+                    android:textColor="#D3E3FD"
+                    android:textSize="10sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -58,10 +60,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
                     android:maxLines="1"
-                    android:text="GAMING FOCUS"
-                    android:textColor="#F8FAFC"
-                    android:textSize="13sp"
+                    android:text="Gaming Focus"
+                    android:textColor="#E2E3EC"
+                    android:textSize="14sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
@@ -77,9 +80,9 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="6dp"
-                    android:fontFamily="monospace"
-                    android:textColor="#00D2FF"
-                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="#A8C7FA"
+                    android:textSize="12sp"
                     android:textStyle="bold"
                     android:visibility="visible" />
 
@@ -88,10 +91,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="6dp"
-                    android:fontFamily="monospace"
+                    android:fontFamily="sans-serif-medium"
                     android:text="00:00 left"
-                    android:textColor="#00D2FF"
-                    android:textSize="11sp"
+                    android:textColor="#A8C7FA"
+                    android:textSize="12sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
 
@@ -102,12 +105,12 @@
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:text="• 0 Calls • 0 Alerts"
-                    android:textColor="#94A3B8"
-                    android:textSize="11sp" />
+                    android:textColor="#C4C6D0"
+                    android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Quick Pill Action Buttons -->
+        <!-- Material 3 Tonal Pill Action Buttons -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -118,15 +121,15 @@
                 android:id="@+id/btn_quick_add"
                 style="@android:style/Widget.DeviceDefault.Button.Borderless"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
+                android:layout_height="32dp"
                 android:layout_marginEnd="6dp"
                 android:background="@drawable/notification_button_accent_bg"
-                android:minWidth="46dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
+                android:minWidth="48dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
                 android:text="+15m"
                 android:textAllCaps="false"
-                android:textColor="#FFFFFF"
+                android:textColor="#D3E3FD"
                 android:textSize="11sp"
                 android:textStyle="bold" />
 
@@ -134,26 +137,26 @@
                 android:id="@+id/btn_quick_stop"
                 style="@android:style/Widget.DeviceDefault.Button.Borderless"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
+                android:layout_height="32dp"
                 android:background="@drawable/notification_button_danger_bg"
                 android:minWidth="48dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
                 android:text="Off"
                 android:textAllCaps="false"
-                android:textColor="#FFCDD2"
+                android:textColor="#F9DEDC"
                 android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Slim Live Session Progress Bar -->
+    <!-- Material 3 Rounded Session Progress Bar -->
     <ProgressBar
         android:id="@+id/pb_collapsed_progress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="3dp"
-        android:layout_marginTop="6dp"
+        android:layout_height="4dp"
+        android:layout_marginTop="8dp"
         android:max="100"
         android:progress="100"
         android:progressDrawable="@drawable/notification_live_progress" />

@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <queries>
@@ -64,7 +65,7 @@
             </intent-filter>
         </service>
 
-        <!-- Quick Settings Tile Service -->
+        <!-- Quick Settings Tile Service (Cycle All Focus Profiles) -->
         <service
             android:name=".services.ZenShieldTileService"
             android:icon="@drawable/ic_launcher_monochrome"
@@ -74,6 +75,39 @@
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <!-- Custom Quick Settings Tile: Direct Gaming Mode Toggle -->
+        <service
+            android:name=".services.GamingModeTileService"
+            android:icon="@drawable/ic_qs_gaming_mode"
+            android:label="@string/tile_gaming_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <!-- Custom Quick Settings Tile: Direct Sleep Mode Toggle -->
+        <service
+            android:name=".services.SleepModeTileService"
+            android:icon="@drawable/ic_qs_sleep_mode"
+            android:label="@string/tile_sleep_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
         </service>
 
         <!-- Interactive Live Focus Controller Foreground Service -->
@@ -117,6 +151,19 @@
                 <action android:name="com.example.zenshield.ACTION_EXPIRE_FOCUS_SESSION" />
                 <action android:name="com.example.zenshield.ACTION_EVALUATE_WORK_SCHEDULE" />
             </intent-filter>
+        </receiver>
+
+        <!-- Resizable 2x1 Material You Home Screen Widget Receiver -->
+        <receiver
+            android:name=".widgets.SentinelWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.zenshield.focus.ACTION_TOGGLE_WIDGET" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sentinel_widget_info" />
         </receiver>
 
     </application>

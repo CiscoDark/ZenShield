@@ -4,12 +4,14 @@ import android.app.NotificationManager
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.DoNotDisturbOn
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.example.ui.theme.CinemaSeedColor
 import com.example.ui.theme.DndSeedColor
 import com.example.ui.theme.GamingSeedColor
 import com.example.ui.theme.SleepSeedColor
@@ -90,6 +92,19 @@ enum class FocusProfile(
         defaultSilenceNotifications = true,
         defaultDimLockScreen = true,
         interruptionFilter = NotificationManager.INTERRUPTION_FILTER_PRIORITY
+    ),
+
+    CINEMA(
+        id = "CINEMA",
+        displayName = "Cinema",
+        subtitle = "Zero vibration, silent audio & ultra-dim theater shield",
+        icon = Icons.Filled.Movie,
+        accentColor = CinemaSeedColor,
+        defaultAllowStarredOnly = false,
+        defaultBlockRepeatedCalls = true,
+        defaultSilenceNotifications = true,
+        defaultDimLockScreen = true,
+        interruptionFilter = NotificationManager.INTERRUPTION_FILTER_PRIORITY
     );
 
     companion object {
@@ -103,5 +118,7 @@ enum class DurationOption(val label: String, val durationMinutes: Long?) {
     UNTIL_TURNED_OFF("Until Turned Off", null),
     FOR_45_MINUTES("For 45 min", 45L),
     FOR_ONE_HOUR("For 1 Hour", 60L),
-    FOR_TWO_HOURS("For 2 Hours", 120L)
+    FOR_TWO_HOURS("For 2 Hours", 120L),
+    FOR_TWO_AND_HALF_HOURS("For 2.5 Hours", 150L),
+    FOR_THREE_HOURS("For 3 Hours", 180L)
 }

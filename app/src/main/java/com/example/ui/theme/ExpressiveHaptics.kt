@@ -89,6 +89,12 @@ object ExpressiveHaptics {
         _lastPlayedPattern.value = pattern
         _triggerCount.value += 1
 
+        // Cinema Mode Zero-Vibration Guardrail: mute physical vibration motor in movie theaters
+        val suppressMotor = runCatching {
+            com.example.core.FocusStateManager.isCinemaZeroVibrationActive(context)
+        }.getOrDefault(false)
+        if (suppressMotor) return
+
         runCatching {
             val vibrator = resolveVibrator(context) ?: return
             if (!vibrator.hasVibrator()) return

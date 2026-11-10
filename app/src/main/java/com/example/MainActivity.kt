@@ -77,6 +77,7 @@ import androidx.compose.material.icons.rounded.DoNotDisturbOn
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.Palette
@@ -159,9 +160,19 @@ import com.example.core.InterceptType
 import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
 import com.example.ui.AutoReplyCustomMessageBottomSheet
+import com.example.ui.CinemaModeDashboardCard
+import com.example.ui.CinemaModeScreen
+import com.example.ui.FocusSessionHistoryDashboardCard
+import com.example.ui.FocusSessionHistoryScreen
 import com.example.ui.GameDetectionCard
 import com.example.ui.GamingModeNonInteractiveOverlay
 import com.example.ui.GamingModePopupManager
+import com.example.ui.GamingModeWeeklyComparisonCard
+import com.example.ui.HomeScreenWidgetCard
+import com.example.ui.NotificationPriorityRulesCard
+import com.example.ui.QuickSettingsTilesCard
+import com.example.ui.RustCoreInspectorCard
+import com.example.ui.SleepScheduleCard
 import com.example.ui.WeeklyShieldStatsCard
 import com.example.ui.WorkScheduleCard
 import com.example.ui.theme.ExpressiveHaptics
@@ -263,19 +274,22 @@ fun ZenShieldDashboardScreen(
     var showWhitelistSheet by remember { mutableStateOf(false) }
     var showGamePickerSheet by remember { mutableStateOf(false) }
     var showAutoReplySheet by remember { mutableStateOf(false) }
+    var showCinemaFullScreen by rememberSaveable { mutableStateOf(false) }
+    var showSessionHistoryFullScreen by rememberSaveable { mutableStateOf(false) }
 
     // Return to Shield Command Center when pressing Back from secondary tabs
-    BackHandler(enabled = selectedTabIndex != 0) {
+    BackHandler(enabled = selectedTabIndex != 0 && !showCinemaFullScreen && !showSessionHistoryFullScreen) {
         ExpressiveHaptics.playSpringTap(context)
         selectedTabIndex = 0
     }
 
-    // System Permissions & Access Trackers
+    // System Permissions & Access Trackers (All 6 Centralized in Settings)
     var hasNotificationListener by remember { mutableStateOf(checkNotificationListenerAccess(context)) }
     var hasDndAccess by remember { mutableStateOf(stateManager.isNotificationPolicyAccessGranted()) }
     var hasRuntimePermissions by remember { mutableStateOf(checkRuntimePermissions(context)) }
     var hasBatteryExemption by remember { mutableStateOf(checkBatteryOptimizationExemption(context)) }
     var hasUsageStatsAccess by remember { mutableStateOf(GameDetectorService.hasUsageStatsPermission(context)) }
+    var hasOverlayPermission by remember { mutableStateOf(com.example.ui.GamingModePopupManager.hasOverlayPermission(context)) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -283,11 +297,13 @@ fun ZenShieldDashboardScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 stateManager.checkAndExpireIfNeeded()
                 stateManager.evaluateWorkSchedule()
+                stateManager.evaluateSleepSchedule()
                 hasNotificationListener = checkNotificationListenerAccess(context)
                 hasDndAccess = stateManager.isNotificationPolicyAccessGranted()
                 hasRuntimePermissions = checkRuntimePermissions(context)
                 hasBatteryExemption = checkBatteryOptimizationExemption(context)
                 hasUsageStatsAccess = GameDetectorService.hasUsageStatsPermission(context)
+                hasOverlayPermission = com.example.ui.GamingModePopupManager.hasOverlayPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -307,7 +323,8 @@ fun ZenShieldDashboardScreen(
         hasDndAccess,
         hasRuntimePermissions,
         hasBatteryExemption,
-        hasUsageStatsAccess
+        hasUsageStatsAccess,
+        hasOverlayPermission
     ).count { it }
 
     val animatedHeaderColor by animateColorAsState(
@@ -317,6 +334,7 @@ fun ZenShieldDashboardScreen(
             FocusProfile.GAMING -> MaterialTheme.colorScheme.secondaryContainer
             FocusProfile.WORK -> MaterialTheme.colorScheme.tertiaryContainer
             FocusProfile.SLEEP -> MaterialTheme.colorScheme.primaryContainer
+            FocusProfile.CINEMA -> MaterialTheme.colorScheme.primaryContainer
         },
         animationSpec = ExpressiveMotion.smoothColorSpring(),
         label = "header_color"
@@ -398,6 +416,37 @@ fun ZenShieldDashboardScreen(
                         }
                     },
                     actions = {
+                        Surface(
+                            shape = RoundedCornerShape(22.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .clickable {
+                                    ExpressiveHaptics.playSpringTap(context)
+                                    showSessionHistoryFullScreen = true
+                                }
+                                .testTag("open_session_history_quick_action")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.BarChart,
+                                    contentDescription = "Open Focus Session History",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "History",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+
                         val whitelistInteraction = remember { MutableInteractionSource() }
                         val isWhitelistPressed by whitelistInteraction.collectIsPressedAsState()
                         val whitelistCorner by animateDpAsState(
@@ -513,6 +562,14 @@ fun ZenShieldDashboardScreen(
                             onOpenSystemTab = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 selectedTabIndex = SentinalWorkspaceTab.SYSTEM.ordinal
+                            },
+                            onOpenCinemaScreen = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showCinemaFullScreen = true
+                            },
+                            onOpenAutoReplySheet = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showAutoReplySheet = true
                             }
                         )
                     }
@@ -520,7 +577,11 @@ fun ZenShieldDashboardScreen(
                     SentinalWorkspaceTab.ANALYTICS -> {
                         AnalyticsTelemetryTab(
                             state = state,
-                            stateManager = stateManager
+                            stateManager = stateManager,
+                            onOpenFullSessionHistory = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showSessionHistoryFullScreen = true
+                            }
                         )
                     }
 
@@ -535,6 +596,10 @@ fun ZenShieldDashboardScreen(
                             onOpenGamePickerSheet = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 showGamePickerSheet = true
+                            },
+                            onOpenCinemaScreen = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showCinemaFullScreen = true
                             }
                         )
                     }
@@ -548,6 +613,7 @@ fun ZenShieldDashboardScreen(
                             hasRuntimePermissions = hasRuntimePermissions,
                             hasBatteryExemption = hasBatteryExemption,
                             hasUsageStatsAccess = hasUsageStatsAccess,
+                            hasOverlayPermission = hasOverlayPermission,
                             grantedPermissionsCount = grantedPermissionsCount,
                             onRequestRuntimePermissions = {
                                 ExpressiveHaptics.playSpringTap(context)
@@ -595,6 +661,31 @@ fun ZenShieldDashboardScreen(
             stateManager = stateManager,
             onDismissRequest = { showAutoReplySheet = false }
         )
+    }
+
+    if (showCinemaFullScreen) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            CinemaModeScreen(
+                stateManager = stateManager,
+                onBack = { showCinemaFullScreen = false },
+                onCustomizeAutoReply = { showAutoReplySheet = true }
+            )
+        }
+    }
+
+    if (showSessionHistoryFullScreen) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            FocusSessionHistoryScreen(
+                stateManager = stateManager,
+                onBack = { showSessionHistoryFullScreen = false }
+            )
+        }
     }
 }
 
@@ -747,6 +838,7 @@ fun LiveAnimatedShieldEmblem(
                             FocusProfile.GAMING -> Icons.Rounded.SportsEsports
                             FocusProfile.WORK -> Icons.Rounded.Work
                             FocusProfile.SLEEP -> Icons.Rounded.Bedtime
+                            FocusProfile.CINEMA -> Icons.Rounded.Movie
                         },
                         contentDescription = profile.displayName,
                         tint = if (profile != FocusProfile.OFF) {
@@ -920,7 +1012,9 @@ private fun ShieldCommandCenterTab(
     stateManager: FocusStateManager,
     onOpenAnalyticsTab: () -> Unit,
     onOpenRulesTab: () -> Unit,
-    onOpenSystemTab: () -> Unit
+    onOpenSystemTab: () -> Unit,
+    onOpenCinemaScreen: () -> Unit = {},
+    onOpenAutoReplySheet: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -963,16 +1057,17 @@ private fun ShieldCommandCenterTab(
             )
         }
 
-        // 2. Permission Readiness Banner (if any system permission is not yet granted)
-        if (grantedPermissionsCount < 5) {
+        // 2. Compact Permission Shortcut Banner (links directly to unified Settings Permissions Hub when any of 6 is missing)
+        if (grantedPermissionsCount < 6) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onOpenSystemTab() }
+                        .testTag("home_permissions_shortcut_banner")
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -988,17 +1083,17 @@ private fun ShieldCommandCenterTab(
                                 imageVector = Icons.Rounded.Security,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                             Column {
                                 Text(
-                                    text = "System Guard Readiness: $grantedPermissionsCount/5 Active",
+                                    text = "System Guard Readiness: $grantedPermissionsCount/6 Active",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                 )
                                 Text(
-                                    text = "Tap to review Notification Listener, DND & Call Screening permissions",
+                                    text = "Tap to open Settings and manage all permissions in one place",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
                                 )
@@ -1054,6 +1149,22 @@ private fun ShieldCommandCenterTab(
             )
         }
 
+        // 3-cinema. Cinema Mode Dashboard Card (2h / 2.5h presets + theater notification blocking toggle)
+        item(key = "cinema_mode_dashboard_section") {
+            CinemaModeDashboardCard(
+                stateManager = stateManager,
+                onOpenFullScreen = onOpenCinemaScreen,
+                onCustomizeAutoReply = onOpenAutoReplySheet
+            )
+        }
+
+        // 3-gaming-comparison. Gaming Mode Time Comparison (This Week vs Last Week)
+        item(key = "gaming_weekly_comparison_section") {
+            GamingModeWeeklyComparisonCard(
+                stateManager = stateManager
+            )
+        }
+
         // 3a. 2x2 Bento Quick-Toggle Grid for Instant Rule Control
         item(key = "quick_rules_bento_section") {
             Row(
@@ -1088,9 +1199,41 @@ private fun ShieldCommandCenterTab(
             )
         }
 
+        // 3a-priority. Notification Priority Categorizer & Global Focus Rules Engine
+        item(key = "notification_priority_rules_section") {
+            NotificationPriorityRulesCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
         // 3b. Work Focus Mode & Automatic Work Hours Schedule Card
         item(key = "work_schedule_card_section") {
             WorkScheduleCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 3b-sleep. Scheduled Sleep Shield & Overnight Bedtime Schedule Card
+        item(key = "sleep_schedule_card_section") {
+            SleepScheduleCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 3b-qs-tiles. Custom Notification Shade Quick Settings Tiles (Gaming Mode & Sleep Mode)
+        item(key = "quick_settings_tiles_section") {
+            QuickSettingsTilesCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 3b-widget. Resizable 2x1 Material You Home Screen Widget Live Preview & Pin Action
+        item(key = "home_screen_widget_section") {
+            HomeScreenWidgetCard(
                 state = state,
                 stateManager = stateManager
             )
@@ -1608,6 +1751,7 @@ fun LiveNotificationHudPreviewCard(
         FocusProfile.DO_NOT_DISTURB -> "DO NOT DISTURB"
         FocusProfile.WORK -> "WORK FOCUS"
         FocusProfile.SLEEP -> "SLEEP SHIELD"
+        FocusProfile.CINEMA -> "CINEMA SHIELD"
         FocusProfile.OFF -> "LIVE NOTIFICATION STANDBY"
     }
 
@@ -2021,7 +2165,8 @@ private fun QuickStatPill(
 @Composable
 private fun AnalyticsTelemetryTab(
     state: FocusSessionState,
-    stateManager: FocusStateManager
+    stateManager: FocusStateManager,
+    onOpenFullSessionHistory: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -2030,6 +2175,21 @@ private fun AnalyticsTelemetryTab(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0a. Focus Session History (Room Database + Recharts-inspired Bar Chart)
+        item(key = "analytics_focus_session_history") {
+            FocusSessionHistoryDashboardCard(
+                stateManager = stateManager,
+                onOpenFullScreen = onOpenFullSessionHistory
+            )
+        }
+
+        // 0b. Gaming Mode Time Comparison Dashboard (This Week vs Last Week)
+        item(key = "analytics_gaming_weekly_comparison") {
+            GamingModeWeeklyComparisonCard(
+                stateManager = stateManager
+            )
+        }
+
         // 1. Primary Recharts-Style Weekly Telemetry Card
         item {
             WeeklyShieldStatsCard(stateManager = stateManager)
@@ -2117,7 +2277,8 @@ private fun RulesAndBouncerTab(
     state: FocusSessionState,
     stateManager: FocusStateManager,
     onOpenAutoReplySheet: () -> Unit,
-    onOpenGamePickerSheet: () -> Unit
+    onOpenGamePickerSheet: () -> Unit,
+    onOpenCinemaScreen: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -2126,6 +2287,23 @@ private fun RulesAndBouncerTab(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0. Cinema Mode Dashboard Card (2h, 2.5h presets & theater notification blocking toggle)
+        item(key = "rules_cinema_mode_card") {
+            CinemaModeDashboardCard(
+                stateManager = stateManager,
+                onOpenFullScreen = onOpenCinemaScreen,
+                onCustomizeAutoReply = onOpenAutoReplySheet
+            )
+        }
+
+        // 0b. Notification Categorizer & Global Priority Focus Rules Engine
+        item(key = "rules_notification_priority_card") {
+            NotificationPriorityRulesCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
         // 1. Call Auto-Reply Customization Card
         item {
             VoipAutoReplyCustomizationCard(
@@ -2138,6 +2316,14 @@ private fun RulesAndBouncerTab(
         // 1b. Work Focus Mode (Manual & Automatic Schedule)
         item {
             WorkScheduleCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 1c. Scheduled Sleep Shield (Manual & Automatic Overnight Bedtime Schedule)
+        item {
+            SleepScheduleCard(
                 state = state,
                 stateManager = stateManager
             )
@@ -2338,18 +2524,116 @@ private fun SystemAndThemeTab(
     hasRuntimePermissions: Boolean,
     hasBatteryExemption: Boolean,
     hasUsageStatsAccess: Boolean,
+    hasOverlayPermission: Boolean,
     grantedPermissionsCount: Int,
     onRequestRuntimePermissions: () -> Unit
 ) {
     val context = LocalContext.current
-    val allPermissionsVerified = grantedPermissionsCount >= 5
+    val allPermissionsVerified = grantedPermissionsCount >= 6
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Material You Theme Studio (Interactive App Icon removed for clean Expressive layout)
+        // 1. Unified System Permissions Hub Card (All 6 Permissions Piled in One Place in Settings)
+        item {
+            ExpandableConfigCard(
+                title = "System Permissions Hub ($grantedPermissionsCount/6)",
+                subtitle = if (allPermissionsVerified) {
+                    "All 6 system permissions verified • Tap to review"
+                } else {
+                    "All required Android permissions consolidated in one place"
+                },
+                icon = Icons.Rounded.Security,
+                initiallyExpanded = true,
+                badgeText = if (allPermissionsVerified) "6/6 VERIFIED" else "$grantedPermissionsCount/6 ACTIVE"
+            ) {
+                PermissionStatusRow(
+                    title = "Display Over Other Apps",
+                    description = "Required to display the floating 5-second Gaming Mode confirmation pop-up over games",
+                    isGranted = hasOverlayPermission,
+                    actionLabel = "Grant",
+                    onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        com.example.ui.GamingModePopupManager.requestOverlayPermission(context)
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Usage Stats Access",
+                    description = "Required to detect real-time game launches and trigger Gaming Mode",
+                    isGranted = hasUsageStatsAccess,
+                    actionLabel = "Grant",
+                    onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            })
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Notification Listener Access",
+                    description = "Required to silence alerts, detect declined calls, and send call auto-replies",
+                    isGranted = hasNotificationListener,
+                    actionLabel = "Enable",
+                    onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "DND Interruption Policy",
+                    description = "Allows syncing Android interruption filter with focus profiles",
+                    isGranted = hasDndAccess,
+                    actionLabel = "Grant",
+                    onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Runtime Permissions",
+                    description = "Starred contacts lookup, cellular call termination, and push notifications",
+                    isGranted = hasRuntimePermissions,
+                    actionLabel = "Grant",
+                    onAction = onRequestRuntimePermissions
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                PermissionStatusRow(
+                    title = "Battery Optimization Exemption",
+                    description = "Prevents OEM battery killers from terminating call and notification guards",
+                    isGranted = hasBatteryExemption,
+                    actionLabel = "Exempt",
+                    onAction = {
+                        ExpressiveHaptics.playSpringTap(context)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            runCatching {
+                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            }.onFailure {
+                                runCatching {
+                                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+        }
+
+        // 2. Material You Theme Studio
         item {
             ExpandableConfigCard(
                 title = "Appearance & Material You Theme",
@@ -2403,90 +2687,20 @@ private fun SystemAndThemeTab(
             }
         }
 
-        // 2. Auto-Collapsing System Permissions Checklist Card
+        // 3. Notification Shade Quick Settings Tiles Manager
         item {
-            ExpandableConfigCard(
-                title = "System Permissions Checklist ($grantedPermissionsCount/5)",
-                subtitle = if (allPermissionsVerified) {
-                    "All 5 system guards verified • Tap to expand diagnostics"
-                } else {
-                    "Interactive checklist for hardware and Android services"
-                },
-                icon = Icons.Rounded.Security,
-                initiallyExpanded = !allPermissionsVerified,
-                badgeText = if (allPermissionsVerified) "5/5 VERIFIED" else "$grantedPermissionsCount/5 ACTIVE"
-            ) {
-                PermissionStatusRow(
-                    title = "Notification Listener Access",
-                    description = "Required to silence alerts, detect declined calls, and send call auto-replies.",
-                    isGranted = hasNotificationListener,
-                    actionLabel = "Enable",
-                    onAction = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        runCatching {
-                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                        }
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                PermissionStatusRow(
-                    title = "DND Interruption Policy",
-                    description = "Allows syncing Android interruption filter with focus profiles",
-                    isGranted = hasDndAccess,
-                    actionLabel = "Grant",
-                    onAction = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        runCatching {
-                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-                        }
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                PermissionStatusRow(
-                    title = "Runtime Permissions",
-                    description = "Starred contacts lookup, cellular call termination, and push notifications",
-                    isGranted = hasRuntimePermissions,
-                    actionLabel = "Grant",
-                    onAction = onRequestRuntimePermissions
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                PermissionStatusRow(
-                    title = "Battery Optimization Exemption",
-                    description = "Prevents OEM battery killers from terminating call and notification guards",
-                    isGranted = hasBatteryExemption,
-                    actionLabel = "Exempt",
-                    onAction = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            runCatching {
-                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                    data = Uri.parse("package:${context.packageName}")
-                                }
-                                context.startActivity(intent)
-                            }.onFailure {
-                                runCatching {
-                                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                                }
-                            }
-                        }
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                PermissionStatusRow(
-                    title = "Usage Stats Access",
-                    description = "Required to detect real-time game launches and auto-engage Gaming profile",
-                    isGranted = hasUsageStatsAccess,
-                    actionLabel = "Grant",
-                    onAction = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        runCatching {
-                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            })
-                        }
-                    }
-                )
-            }
+            QuickSettingsTilesCard(
+                state = state,
+                stateManager = stateManager
+            )
+        }
+
+        // 4. Rust Core Engine & Deterministic State Machine Inspector
+        item(key = "system_rust_core_inspector") {
+            RustCoreInspectorCard(
+                state = state,
+                stateManager = stateManager
+            )
         }
     }
 }
@@ -2983,7 +3197,8 @@ fun FocusProfileBentoGrid(
         Triple(FocusProfile.DO_NOT_DISTURB, Icons.Rounded.DoNotDisturbOn, "Silences notifications & declines calls"),
         Triple(FocusProfile.GAMING, Icons.Rounded.SportsEsports, "Zero popups, VoIP bouncer & 15s exit grace"),
         Triple(FocusProfile.WORK, Icons.Rounded.Work, "Manual or scheduled focus with custom rules"),
-        Triple(FocusProfile.SLEEP, Icons.Rounded.Bedtime, "Restful night shield with lock screen dim")
+        Triple(FocusProfile.SLEEP, Icons.Rounded.Bedtime, "Restful night shield with lock screen dim"),
+        Triple(FocusProfile.CINEMA, Icons.Rounded.Movie, "Zero vibration, 2h/2.5h presets & theater shield")
     )
 
     Column(

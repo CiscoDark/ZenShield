@@ -99,18 +99,44 @@ class GameDetectorService : Service() {
                             isGamePackage(lastKnownForegroundPackage!!, stateManager)
 
                     if (isGameInForeground) {
+                        val pkg = lastKnownForegroundPackage!!
                         hasEnteredGameDuringSession = true
+                        stateManager.notifyForegroundGameObserved(pkg)
                         // Game is actively running in foreground: cancel any pending deactivation countdown
                         stateManager.cancelGameExitedDeactivation()
 
-                        if (stateManager.state.value.activeProfile != FocusProfile.GAMING &&
+                        val currentState = stateManager.state.value
+                        if (currentState.activeProfile != FocusProfile.GAMING &&
                             stateManager.isAutoGameDetectionEnabled()
                         ) {
-                            Log.i(TAG, "Game detected in foreground: $lastKnownForegroundPackage. Triggering Gaming Profile.")
-                            stateManager.handleGameLaunched(lastKnownForegroundPackage!!)
+                            if (currentState.declinedGamePackageForSession == pkg ||
+                                currentState.manuallyDismissedGamingWhilstInGame
+                            ) {
+                                // User tapped 'Not Now' or manually turned off Gaming Mode from the notification bar
+                                // for this game session; wait until they close and relaunch the game.
+                            } else if (currentState.askBeforeGameActivation) {
+                                Log.i(TAG, "Game detected in foreground: $pkg. Showing 5s confirmation prompt.")
+                                stateManager.requestGameLaunchConfirmation(pkg)
+                            } else {
+                                Log.i(TAG, "Game detected in foreground: $pkg. Triggering Gaming Profile immediately.")
+                                stateManager.handleGameLaunched(pkg)
+                            }
                         }
                     } else {
-                        // Game is NOT in foreground
+                        // Game is NOT in foreground: if screen is interactive and user switched to a non-game app/launcher,
+                        // reset any per-session 'Not Now' or manual 'Turn Off' suppression so relaunching the game works.
+                        if (isScreenInteractive && !detectedPackage.isNullOrBlank()) {
+                            stateManager.clearDeclinedGameSessionIfExited(detectedPackage)
+                        }
+                        val currentState = stateManager.state.value
+                        if (!currentState.isPendingGamePreview &&
+                            currentState.pendingGameActivationPackage != null &&
+                            !detectedPackage.isNullOrBlank() &&
+                            detectedPackage != currentState.pendingGameActivationPackage
+                        ) {
+                            stateManager.cancelPendingGameActivationPrompt()
+                        }
+
                         if (stateManager.state.value.activeProfile == FocusProfile.GAMING) {
                             // If the user just manually enabled Gaming Mode inside Sentinel and is still in Sentinel,
                             // do not start the 15s exit countdown until they launch a game or leave Sentinel.
@@ -121,7 +147,7 @@ class GameDetectorService : Service() {
                             if (isStillInsideSentinelApp) {
                                 stateManager.cancelGameExitedDeactivation()
                             } else if (!stateManager.isGameExitedDeactivationScheduled()) {
-                                Log.i(TAG, "Game exited or minimized (current: $lastKnownForegroundPackage, screenInteractive: $isScreenInteractive). Scheduling 15s auto-deactivation.")
+                                Log.i(TAG, "Game exited or minimized (current: $lastKnownForegroundPackage, screenInteractive: $lastKnownForegroundPackage). Scheduling 15s auto-deactivation.")
                                 stateManager.scheduleGameExitedDeactivation(FocusStateManager.GAME_EXIT_DEACTIVATION_DELAY_MS)
                             }
                         } else {

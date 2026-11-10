@@ -80,8 +80,12 @@ fun GameDetectionCard(
 ) {
     val context = LocalContext.current
     var isExpanded by remember { mutableStateOf(false) }
-    val hasUsageAccess = remember(state.autoGameDetectionEnabled) {
+    val hasUsageAccess = remember(state.autoGameDetectionEnabled, isExpanded) {
         GameDetectorService.hasUsageStatsPermission(context)
+    }
+    val hasOverlayPermission = remember(isExpanded, state.pendingGameCountdownSeconds) {
+        android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M ||
+            Settings.canDrawOverlays(context)
     }
 
     val cardCorner by animateDpAsState(
@@ -145,14 +149,17 @@ fun GameDetectionCard(
                         )
                         val subtitleText = when {
                             !state.autoGameDetectionEnabled -> "Auto-activation on launch disabled"
+                            state.pendingGameCountdownSeconds != null -> "🎮 Asking to activate for ${state.pendingGameActivationLabel ?: "Game"} (${state.pendingGameCountdownSeconds}s)"
                             state.gameExitCountdownSeconds != null -> "⏳ Game exited/minimized • Deactivating in ${state.gameExitCountdownSeconds}s"
                             state.activeProfile == FocusProfile.GAMING -> "🎮 Game active • In Gaming DND lockdown (Auto-exits 15s after leaving game)"
+                            state.askBeforeGameActivation -> "Asks via 5s pop-up on launch • Auto-deactivates 15s after exit"
                             else -> "Auto-activates on launch • Auto-deactivates 15s after exit"
                         }
                         Text(
                             text = subtitleText,
                             style = MaterialTheme.typography.bodySmall,
                             color = when {
+                                state.pendingGameCountdownSeconds != null -> MaterialTheme.colorScheme.primary
                                 state.gameExitCountdownSeconds != null -> MaterialTheme.colorScheme.error
                                 state.activeProfile == FocusProfile.GAMING -> MaterialTheme.colorScheme.primary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -230,9 +237,87 @@ fun GameDetectionCard(
                         }
                     }
 
-                    // Usage Stats Permission Banner if permission missing
-                    if (state.autoGameDetectionEnabled && !hasUsageAccess) {
-                        UsageAccessAlertBanner(context = context)
+                    // Dedicated Auto-Activation Confirmation Pop-up Section (Activate / Not Now + 5s Countdown)
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Ask Before Activating (5s Countdown)",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Shows an Activate / Not Now pop-up when a game launches and auto-engages after 5s if untouched",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = state.askBeforeGameActivation,
+                                    onCheckedChange = { enabled ->
+                                        stateManager.setAskBeforeGameActivationEnabled(enabled)
+                                        if (enabled && !GamingModePopupManager.hasOverlayPermission(context)) {
+                                            GamingModePopupManager.requestOverlayPermission(context)
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("toggle_ask_before_game_activation")
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (state.activeProfile == FocusProfile.GAMING) {
+                                            stateManager.setProfile(FocusProfile.OFF)
+                                        }
+                                        stateManager.requestGameLaunchConfirmation(
+                                            packageName = "com.activision.callofduty.shooter",
+                                            appLabel = "Call of Duty Mobile",
+                                            isManualPreview = true
+                                        )
+                                    },
+                                    shape = CircleShape,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("test_game_confirmation_popup_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.SportsEsports,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (state.pendingGameCountdownSeconds != null) {
+                                            "Prompt Active (${state.pendingGameCountdownSeconds}s)"
+                                        } else {
+                                            "Preview 5s Launch Pop-up"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -249,69 +334,6 @@ fun GameDetectionCard(
                         onRemoveGame = { pkg -> stateManager.removeCustomGamePackage(pkg) }
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun UsageAccessAlertBanner(
-    context: Context,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.errorContainer,
-        modifier = modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.size(26.dp)
-            )
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Usage Access Required",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-                Text(
-                    text = "Grant Usage Access so Sentinal can detect when games launch in real time.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
-                )
-            }
-
-            Button(
-                onClick = {
-                    runCatching {
-                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        })
-                    }
-                },
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError
-                ),
-                modifier = Modifier.testTag("grant_usage_access_button")
-            ) {
-                Text(
-                    text = "Grant",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }

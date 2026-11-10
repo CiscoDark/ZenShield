@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.DoNotDisturbOn
+import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -75,7 +76,8 @@ private enum class AutoReplyTab(val title: String, val profile: FocusProfile?) {
     DND("DND", FocusProfile.DO_NOT_DISTURB),
     GAMING("Gaming", FocusProfile.GAMING),
     WORK("Work", FocusProfile.WORK),
-    SLEEP("Sleep", FocusProfile.SLEEP)
+    SLEEP("Sleep", FocusProfile.SLEEP),
+    CINEMA("Cinema", FocusProfile.CINEMA)
 }
 
 private data class MessagePreset(
@@ -113,6 +115,9 @@ fun AutoReplyCustomMessageBottomSheet(
     var sleepText by remember(state.perProfileAutoReplyMessages[FocusProfile.SLEEP]) {
         mutableStateOf(state.perProfileAutoReplyMessages[FocusProfile.SLEEP] ?: "")
     }
+    var cinemaText by remember(state.perProfileAutoReplyMessages[FocusProfile.CINEMA]) {
+        mutableStateOf(state.perProfileAutoReplyMessages[FocusProfile.CINEMA] ?: "")
+    }
 
     val presets = remember {
         listOf(
@@ -120,6 +125,11 @@ fun AutoReplyCustomMessageBottomSheet(
                 title = "Standard Shield",
                 iconEmoji = "🛡️",
                 text = FocusStateManager.DEFAULT_AUTO_REPLY_TEMPLATE
+            ),
+            MessagePreset(
+                title = "Cinema Theater",
+                iconEmoji = "🍿",
+                text = FocusStateManager.DEFAULT_CINEMA_AUTO_REPLY
             ),
             MessagePreset(
                 title = "Gaming Mode",
@@ -231,6 +241,7 @@ fun AutoReplyCustomMessageBottomSheet(
                                     AutoReplyTab.GAMING -> Icon(Icons.Rounded.SportsEsports, contentDescription = null, modifier = Modifier.size(16.dp))
                                     AutoReplyTab.WORK -> Icon(Icons.Rounded.Work, contentDescription = null, modifier = Modifier.size(16.dp))
                                     AutoReplyTab.SLEEP -> Icon(Icons.Rounded.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    AutoReplyTab.CINEMA -> Icon(Icons.Rounded.Movie, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 Text(
                                     text = tab.title,
@@ -359,6 +370,7 @@ fun AutoReplyCustomMessageBottomSheet(
                         FocusProfile.GAMING -> gamingText.isNotBlank()
                         FocusProfile.WORK -> workText.isNotBlank()
                         FocusProfile.SLEEP -> sleepText.isNotBlank()
+                        FocusProfile.CINEMA -> cinemaText.isNotBlank()
                         FocusProfile.OFF -> false
                     }
 
@@ -396,6 +408,7 @@ fun AutoReplyCustomMessageBottomSheet(
                                             FocusProfile.GAMING -> { gamingText = defaultForProfile; stateManager.setPerProfileAutoReplyMessage(currentProfile, defaultForProfile) }
                                             FocusProfile.WORK -> { workText = defaultForProfile; stateManager.setPerProfileAutoReplyMessage(currentProfile, defaultForProfile) }
                                             FocusProfile.SLEEP -> { sleepText = defaultForProfile; stateManager.setPerProfileAutoReplyMessage(currentProfile, defaultForProfile) }
+                                            FocusProfile.CINEMA -> { cinemaText = defaultForProfile; stateManager.setPerProfileAutoReplyMessage(currentProfile, defaultForProfile) }
                                             FocusProfile.OFF -> {}
                                         }
                                     } else {
@@ -404,6 +417,7 @@ fun AutoReplyCustomMessageBottomSheet(
                                             FocusProfile.GAMING -> { gamingText = ""; stateManager.setPerProfileAutoReplyMessage(currentProfile, "") }
                                             FocusProfile.WORK -> { workText = ""; stateManager.setPerProfileAutoReplyMessage(currentProfile, "") }
                                             FocusProfile.SLEEP -> { sleepText = ""; stateManager.setPerProfileAutoReplyMessage(currentProfile, "") }
+                                            FocusProfile.CINEMA -> { cinemaText = ""; stateManager.setPerProfileAutoReplyMessage(currentProfile, "") }
                                             FocusProfile.OFF -> {}
                                         }
                                     }
@@ -418,6 +432,7 @@ fun AutoReplyCustomMessageBottomSheet(
                         FocusProfile.GAMING -> gamingText
                         FocusProfile.WORK -> workText
                         FocusProfile.SLEEP -> sleepText
+                        FocusProfile.CINEMA -> cinemaText
                         FocusProfile.OFF -> ""
                     }
 
@@ -430,6 +445,7 @@ fun AutoReplyCustomMessageBottomSheet(
                                     FocusProfile.GAMING -> { gamingText = newText; stateManager.setPerProfileAutoReplyMessage(currentProfile, newText) }
                                     FocusProfile.WORK -> { workText = newText; stateManager.setPerProfileAutoReplyMessage(currentProfile, newText) }
                                     FocusProfile.SLEEP -> { sleepText = newText; stateManager.setPerProfileAutoReplyMessage(currentProfile, newText) }
+                                    FocusProfile.CINEMA -> { cinemaText = newText; stateManager.setPerProfileAutoReplyMessage(currentProfile, newText) }
                                     FocusProfile.OFF -> {}
                                 }
                             },
@@ -476,6 +492,7 @@ fun AutoReplyCustomMessageBottomSheet(
                                             FocusProfile.GAMING -> { gamingText = preset.text; stateManager.setPerProfileAutoReplyMessage(currentProfile, preset.text) }
                                             FocusProfile.WORK -> { workText = preset.text; stateManager.setPerProfileAutoReplyMessage(currentProfile, preset.text) }
                                             FocusProfile.SLEEP -> { sleepText = preset.text; stateManager.setPerProfileAutoReplyMessage(currentProfile, preset.text) }
+                                            FocusProfile.CINEMA -> { cinemaText = preset.text; stateManager.setPerProfileAutoReplyMessage(currentProfile, preset.text) }
                                             FocusProfile.OFF -> {}
                                         }
                                     }
@@ -590,6 +607,7 @@ fun AutoReplyCustomMessageBottomSheet(
                         gamingText = ""
                         workText = ""
                         sleepText = ""
+                        cinemaText = ""
                     },
                     modifier = Modifier
                         .weight(1f)

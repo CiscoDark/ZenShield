@@ -121,6 +121,7 @@ class ExampleRobolectricTest {
                 FocusProfile.GAMING -> FocusProfile.WORK
                 FocusProfile.WORK -> FocusProfile.SLEEP
                 FocusProfile.SLEEP -> FocusProfile.OFF
+                FocusProfile.CINEMA -> FocusProfile.OFF
             }
             assertEquals("Cycle from $current must lead to $next", next, evaluated)
         }
@@ -940,6 +941,186 @@ class ExampleRobolectricTest {
 
         stateManager.setWorkScheduleEnabled(false)
         stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `cinema mode supports 2h and 2_5h duration presets and theater notification blocking toggle`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+
+        // Verify 2h (120 min) preset activation
+        stateManager.activateCinemaMode(120)
+        assertEquals(FocusProfile.CINEMA, stateManager.getActiveProfile())
+        assertEquals(120, stateManager.state.value.cinemaPresetMinutes)
+        assertEquals(DurationOption.FOR_TWO_HOURS, stateManager.state.value.durationOption)
+
+        // Verify 2.5h (150 min) preset activation
+        stateManager.activateCinemaMode(150)
+        assertEquals(FocusProfile.CINEMA, stateManager.getActiveProfile())
+        assertEquals(150, stateManager.state.value.cinemaPresetMinutes)
+        assertEquals(DurationOption.FOR_TWO_AND_HALF_HOURS, stateManager.state.value.durationOption)
+
+        // Verify theater notification blocking toggle and zero-vibration posture
+        stateManager.setCinemaNotificationBlockingEnabled(false)
+        assertFalse(stateManager.state.value.cinemaNotificationBlockingEnabled)
+        stateManager.setCinemaNotificationBlockingEnabled(true)
+        assertTrue(stateManager.state.value.cinemaNotificationBlockingEnabled)
+
+        assertTrue(FocusStateManager.isCinemaZeroVibrationActive(context))
+        stateManager.setCinemaZeroVibrationEnabled(false)
+        assertFalse(FocusStateManager.isCinemaZeroVibrationActive(context))
+        stateManager.setCinemaZeroVibrationEnabled(true)
+
+        // Verify theater auto-reply message
+        val cinemaReply = stateManager.getAutoReplyMessage(FocusProfile.CINEMA)
+        assertTrue(cinemaReply.contains("movie theater", ignoreCase = true))
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `gaming mode confirmation prompt supports activate, not now session suppression, and reset on game exit`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        stateManager.setAutoGameDetectionEnabled(true)
+        stateManager.setAskBeforeGameActivationEnabled(true)
+        stateManager.clearDeclinedGameSessionIfExited(null)
+
+        val gamePkg = "com.activision.callofduty.shooter"
+
+        // 1. Trigger confirmation prompt on game launch
+        stateManager.requestGameLaunchConfirmation(gamePkg, "Call of Duty Mobile", countdownSeconds = 5)
+        assertEquals(gamePkg, stateManager.state.value.pendingGameActivationPackage)
+        assertEquals(5, stateManager.state.value.pendingGameCountdownSeconds)
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+
+        // 2. Tap 'Not Now' -> keeps Gaming Mode off and suppresses re-prompting for this game session
+        stateManager.declinePendingGameActivation()
+        assertEquals(null, stateManager.state.value.pendingGameActivationPackage)
+        assertEquals(gamePkg, stateManager.state.value.declinedGamePackageForSession)
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+
+        // 3. Re-detecting same game while still in session must NOT re-open prompt
+        stateManager.requestGameLaunchConfirmation(gamePkg, "Call of Duty Mobile", countdownSeconds = 5)
+        assertEquals(null, stateManager.state.value.pendingGameActivationPackage)
+
+        // 4. Closing/leaving the game clears the session suppression
+        stateManager.clearDeclinedGameSessionIfExited("com.android.launcher3")
+        assertEquals(null, stateManager.state.value.declinedGamePackageForSession)
+
+        // 5. Relaunching the game now shows the prompt again, and tapping 'Activate' engages Gaming Mode
+        stateManager.requestGameLaunchConfirmation(gamePkg, "Call of Duty Mobile", countdownSeconds = 5)
+        assertEquals(gamePkg, stateManager.state.value.pendingGameActivationPackage)
+        stateManager.confirmPendingGameActivation()
+        assertEquals(FocusProfile.GAMING, stateManager.getActiveProfile())
+        assertTrue(stateManager.state.value.isAutoTriggeredByGame)
+
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `sleep focus overnight schedule activates at bedtime and deactivates at wake up`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.setProfile(FocusProfile.OFF)
+        stateManager.setSleepScheduleTime(22, 30, 7, 0)
+        stateManager.setSleepScheduleDays(com.example.core.FocusSessionState.DEFAULT_SLEEP_DAYS)
+        stateManager.setSleepScheduleEnabled(true)
+
+        // Upcoming Monday night at 23:15 (11:15 PM) -> Inside overnight sleep window
+        val mondayNight = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, 7)
+            set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+            set(java.util.Calendar.HOUR_OF_DAY, 23)
+            set(java.util.Calendar.MINUTE, 15)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        stateManager.evaluateSleepSchedule(mondayNight.timeInMillis)
+        assertEquals(FocusProfile.SLEEP, stateManager.getActiveProfile())
+        assertTrue(stateManager.state.value.isAutoTriggeredBySleepSchedule)
+        assertTrue(stateManager.state.value.expiresAtMillis != null)
+
+        // Next morning (Tuesday at 07:30 AM) -> Outside overnight sleep window -> Auto-reverts to OFF
+        val tuesdayMorning = (mondayNight.clone() as java.util.Calendar).apply {
+            add(java.util.Calendar.DAY_OF_YEAR, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 7)
+            set(java.util.Calendar.MINUTE, 30)
+        }
+        stateManager.evaluateSleepSchedule(tuesdayMorning.timeInMillis)
+        assertEquals(FocusProfile.OFF, stateManager.getActiveProfile())
+        assertFalse(stateManager.state.value.isAutoTriggeredBySleepSchedule)
+
+        stateManager.setSleepScheduleEnabled(false)
+        stateManager.setProfile(FocusProfile.OFF)
+    }
+
+    @Test
+    fun `notification categorizer classifies incoming alerts and applies user priority focus rules`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val stateManager = FocusStateManager.getInstance(context)
+
+        stateManager.applyGlobalFocusRulePreset("BALANCED")
+
+        // 1. Classify Security/OTP as SECURITY_AND_URGENT -> CRITICAL -> ALLOW_ALL
+        val otpCat = stateManager.classifyIncomingNotification(
+            packageName = "com.google.android.apps.authenticator2",
+            androidCategory = null,
+            title = "Verification Code",
+            text = "Your OTP code is 992-841"
+        )
+        assertEquals(com.example.core.NotificationCategory.SECURITY_AND_URGENT, otpCat)
+        assertEquals(
+            com.example.core.GlobalFocusRuleAction.ALLOW_ALL,
+            stateManager.getEffectiveRuleForCategory(otpCat)
+        )
+
+        // 2. Classify Direct Message as DIRECT_MESSAGES -> HIGH -> MUTE_SILENT
+        val dmCat = stateManager.classifyIncomingNotification(
+            packageName = "com.whatsapp",
+            androidCategory = android.app.Notification.CATEGORY_MESSAGE,
+            title = "Maya Lin",
+            text = "Hey, are you free?"
+        )
+        assertEquals(com.example.core.NotificationCategory.DIRECT_MESSAGES, dmCat)
+        assertEquals(
+            com.example.core.GlobalFocusRuleAction.MUTE_SILENT,
+            stateManager.getEffectiveRuleForCategory(dmCat)
+        )
+
+        // 3. Classify Promotion as PROMOTIONS_AND_DEALS -> LOW -> HIDE_COMPLETELY
+        val promoCat = stateManager.classifyIncomingNotification(
+            packageName = "com.amazon.mShop.android.shopping",
+            androidCategory = android.app.Notification.CATEGORY_PROMO,
+            title = "Flash Sale 50% OFF",
+            text = "Limited time discount coupon"
+        )
+        assertEquals(com.example.core.NotificationCategory.PROMOTIONS_AND_DEALS, promoCat)
+        assertEquals(
+            com.example.core.GlobalFocusRuleAction.HIDE_COMPLETELY,
+            stateManager.getEffectiveRuleForCategory(promoCat)
+        )
+
+        // 4. User elevates DIRECT_MESSAGES to CRITICAL -> effective action updates to ALLOW_ALL
+        stateManager.setCategoryPriorityLevel(
+            com.example.core.NotificationCategory.DIRECT_MESSAGES,
+            com.example.core.NotificationPriorityLevel.CRITICAL
+        )
+        assertEquals(
+            com.example.core.GlobalFocusRuleAction.ALLOW_ALL,
+            stateManager.getEffectiveRuleForCategory(com.example.core.NotificationCategory.DIRECT_MESSAGES)
+        )
+
+        // Restore default priority
+        stateManager.setCategoryPriorityLevel(
+            com.example.core.NotificationCategory.DIRECT_MESSAGES,
+            com.example.core.NotificationPriorityLevel.HIGH
+        )
     }
 }
 

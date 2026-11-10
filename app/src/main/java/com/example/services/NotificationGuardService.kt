@@ -24,6 +24,7 @@ import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
 import com.example.core.FocusProfile
 import com.example.core.FocusStateManager
+import com.example.core.GlobalFocusRuleAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -145,8 +146,11 @@ class NotificationGuardService : NotificationListenerService() {
             cacheRemoteInputFromNotification(sbn)
         }
 
-        // If Focus Shield is OFF, do not intervene
-        if (activeProfile == FocusProfile.OFF) {
+        // If Focus Shield is OFF, only intervene on regular notifications when 24/7 Standby Global Rules are enabled
+        val standbyGlobalRulesActive = stateManager.state.value.globalFocusRulesEnabled &&
+            stateManager.state.value.enforceGlobalRulesWhenStandby &&
+            !isVoipCall && !isCellularCall
+        if (activeProfile == FocusProfile.OFF && !standbyGlobalRulesActive) {
             return
         }
 
@@ -323,6 +327,8 @@ class NotificationGuardService : NotificationListenerService() {
             // Check if VoIP auto-decline is enabled for the current mode (unless Decline All Calls Regardless is on)
             val voipDeclineEnabled = if (activeProfile == FocusProfile.GAMING) {
                 stateManager.state.value.autoDeclineVoipInGame || stateManager.state.value.autoDeclineVoipCalls
+            } else if (activeProfile == FocusProfile.CINEMA) {
+                true
             } else {
                 stateManager.state.value.autoDeclineVoipCalls
             }
@@ -473,17 +479,21 @@ class NotificationGuardService : NotificationListenerService() {
         }
 
         // =========================================================================
-        // REGULAR NOTIFICATIONS: Whitelist, Smart Scanner, Auto-Reply, and Snooze
+        // REGULAR NOTIFICATIONS: Categorization, Global Priority Rules, Whitelist & Smart Scanner
         // =========================================================================
 
-        // Respect the user's silenceNotifications rule toggle (unless in Strict Gaming Lockdown with suppressHeadsUpBanners)
-        if (!stateManager.state.value.silenceNotifications && !(isGamingLockdown && stateManager.state.value.suppressHeadsUpBanners)) {
+        // Respect the user's silenceNotifications rule toggle (unless in Strict Gaming Lockdown or 24/7 Global Rules)
+        if (activeProfile != FocusProfile.OFF &&
+            !stateManager.state.value.silenceNotifications &&
+            !stateManager.state.value.globalFocusRulesEnabled &&
+            !(isGamingLockdown && stateManager.state.value.suppressHeadsUpBanners)
+        ) {
             Log.d(TAG, "Notification silencing disabled in settings; allowing notification from ${sbn.packageName}")
             return
         }
 
         // A. Whitelisted Package Check (Per-Profile Whitelist)
-        if (stateManager.isPackageWhitelisted(activeProfile, sbn.packageName)) {
+        if (activeProfile != FocusProfile.OFF && stateManager.isPackageWhitelisted(activeProfile, sbn.packageName)) {
             Log.d(TAG, "Allowing notification from whitelisted package: ${sbn.packageName} for ${activeProfile.displayName}")
             return
         }
@@ -494,6 +504,16 @@ class NotificationGuardService : NotificationListenerService() {
         val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
         val bigText = extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
         val combinedContent = "$title $text $bigText".lowercase(Locale.ROOT)
+        val sourceLabel = title.ifBlank { sbn.packageName }
+
+        // Categorize incoming notification and resolve user-defined Priority Level & Global Focus Rule Action
+        val ruleAction = stateManager.evaluateAndRecordCategorizedNotification(
+            packageName = sbn.packageName,
+            appLabel = sourceLabel,
+            androidCategory = sbn.notification?.category,
+            title = title,
+            text = "$text $bigText".trim()
+        )
 
         val isUrgentBreakthrough = stateManager.state.value.smartUrgentBreakthroughEnabled &&
                 matchesUrgentKeywords(combinedContent)
@@ -503,11 +523,42 @@ class NotificationGuardService : NotificationListenerService() {
             return // Allow visible notification
         }
 
-        // C. Zero-Trace Immediate Dismissal (Clean silence & dismissal without replying to text messages)
-        val sourceLabel = title.ifBlank { sbn.packageName }
+        // C. Global Priority Focus Rules Enforcement (Allow / Mute / Hide)
+        if (stateManager.state.value.globalFocusRulesEnabled && !isGamingLockdown) {
+            when (ruleAction) {
+                GlobalFocusRuleAction.ALLOW_ALL -> {
+                    Log.d(TAG, "Global Priority Rule ALLOWED notification from ${sbn.packageName} ('$title')")
+                    return
+                }
+                GlobalFocusRuleAction.MUTE_SILENT -> {
+                    stateManager.incrementShieldedNotification(
+                        sourceApp = sourceLabel,
+                        detail = "Muted audio & heads-up banner via Global Priority Rule"
+                    )
+                    try {
+                        snoozeNotification(sbn.key, 60_000L)
+                        Log.d(TAG, "Global Priority Rule MUTED notification from ${sbn.packageName}")
+                    } catch (e: Exception) {
+                        try {
+                            cancelNotification(sbn.key)
+                        } catch (_: Exception) {}
+                    }
+                    return
+                }
+                GlobalFocusRuleAction.HIDE_COMPLETELY -> {
+                    // Fall through to immediate zero-trace dismissal
+                }
+            }
+        }
+
+        // D. Zero-Trace Immediate Dismissal (Clean silence & dismissal without replying to text messages)
         stateManager.incrementShieldedNotification(
             sourceApp = sourceLabel,
-            detail = "Silenced & dismissed without auto-reply"
+            detail = if (stateManager.state.value.globalFocusRulesEnabled) {
+                "Hidden & dismissed via Global Priority Rule"
+            } else {
+                "Silenced & dismissed without auto-reply"
+            }
         )
         try {
             cancelNotification(sbn.key)

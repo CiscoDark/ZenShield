@@ -74,6 +74,15 @@ val SleepOnPrimaryContainerDark = Color(0xFFDEE0FF)
 val SleepSecondaryDark = Color(0xFFC3C5DD)
 val SleepTertiaryDark = Color(0xFFB39DDB)
 
+// CINEMA - Theater Marquee Amber / Velvet Gold Shield
+val CinemaSeedColor = Color(0xFFFFB020)
+val CinemaPrimaryDark = Color(0xFFFFCA62)
+val CinemaOnPrimaryDark = Color(0xFF422C00)
+val CinemaPrimaryContainerDark = Color(0xFF5F4100)
+val CinemaOnPrimaryContainerDark = Color(0xFFFFDEA5)
+val CinemaSecondaryDark = Color(0xFFDEC3A1)
+val CinemaTertiaryDark = Color(0xFFFFB3AC)
+
 // Minimalist Lockscreen Dim Background
 val LockscreenSlateDark = Color(0xFF0B0F17)
 val LockscreenSlateMuted = Color(0xFF1F293D)

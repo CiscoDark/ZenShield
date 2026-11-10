@@ -277,7 +277,7 @@ fun SettingsScreen(
             }
 
             item {
-                SectionHeader("Lock Screen & System Services")
+                SectionHeader("System Permissions Hub & Lock Screen")
             }
 
             item {
@@ -292,16 +292,33 @@ fun SettingsScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        ThemeToggleRow(
-                            icon = Icons.Filled.Wallpaper,
-                            title = stringResource(R.string.dim_lock_screen),
-                            subtitle = stringResource(R.string.lockscreen_wallpaper_desc),
-                            checked = state.dimLockScreenEnabled,
-                            onCheckedChange = { checked ->
-                                stateManager.setDimLockScreenEnabled(checked)
-                            },
-                            testTag = "toggle_dim_lock_screen"
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Display Over Other Apps",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Required for the floating 5-second Gaming Mode confirmation pop-up over games",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    GamingModePopupManager.requestOverlayPermission(context)
+                                },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("settings_grant_overlay_btn")
+                            ) {
+                                Text(if (GamingModePopupManager.hasOverlayPermission(context)) "Granted" else "Grant")
+                            }
+                        }
 
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
@@ -312,12 +329,12 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "System DND & Notification Access",
+                                    text = "Usage Stats Access",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Required for automatic DND sync and VoIP call screening",
+                                    text = "Required to detect real-time game launches and trigger Gaming Mode",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -325,10 +342,12 @@ fun SettingsScreen(
                             Button(
                                 onClick = {
                                     runCatching {
-                                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        })
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(50)
                             ) {
                                 Text("Manage")
                             }
@@ -359,13 +378,95 @@ fun SettingsScreen(
                                         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(50)
                             ) {
                                 Text("Manage")
                             }
                         }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "System DND & Interruption Policy",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Required for automatic DND sync and VoIP call screening",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                                    }
+                                },
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text("Manage")
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Battery Optimization Exemption",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Prevents OEM battery killers from stopping Focus guards",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                    }
+                                },
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text("Exempt")
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        ThemeToggleRow(
+                            icon = Icons.Filled.Wallpaper,
+                            title = stringResource(R.string.dim_lock_screen),
+                            subtitle = stringResource(R.string.lockscreen_wallpaper_desc),
+                            checked = state.dimLockScreenEnabled,
+                            onCheckedChange = { checked ->
+                                stateManager.setDimLockScreenEnabled(checked)
+                            },
+                            testTag = "toggle_dim_lock_screen"
+                        )
                     }
                 }
+            }
+
+            item {
+                RustCoreInspectorCard(
+                    state = state,
+                    stateManager = stateManager
+                )
             }
 
             item {

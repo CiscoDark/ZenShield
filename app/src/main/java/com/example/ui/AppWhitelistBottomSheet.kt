@@ -155,7 +155,8 @@ fun AppWhitelistBottomSheet(
                         FocusProfile.WORK,
                         FocusProfile.GAMING,
                         FocusProfile.DO_NOT_DISTURB,
-                        FocusProfile.SLEEP
+                        FocusProfile.SLEEP,
+                        FocusProfile.CINEMA
                     ).forEach { profile ->
                         val isSelected = selectedProfileToConfigure == profile
                         FilterChip(
