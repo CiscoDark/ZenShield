@@ -42,12 +42,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,10 +108,13 @@ fun formatGamingDurationMinutes(totalMinutes: Int): String {
 fun GamingModeWeeklyComparisonCard(
     stateManager: FocusStateManager,
     modifier: Modifier = Modifier,
-    showSimulationControls: Boolean = true
+    showSimulationControls: Boolean = false,
+    historyViewModel: FocusSessionHistoryViewModel = viewModel(
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
+    )
 ) {
     val context = LocalContext.current
-    val summary by stateManager.gamingWeeklyComparisonFlow.collectAsState()
+    val summary by historyViewModel.gamingWeeklyComparisonFlow.collectAsStateWithLifecycle()
     var chartStyle by remember { mutableStateOf(GamingComparisonChartStyle.GROUPED_BARS) }
     var selectedDayIndex by remember(summary.days.size) {
         mutableIntStateOf((summary.days.size - 1).coerceAtLeast(0))
@@ -594,7 +598,7 @@ private fun GamingComparisonCanvasChart(
     // Animated fractions per day for smooth Recharts-like transitions
     val thisWeekFractions = days.mapIndexed { idx, day ->
         val frac by animateFloatAsState(
-            targetValue = (day.thisWeekMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.02f, 1f),
+            targetValue = if (day.thisWeekMinutes <= 0) 0f else (day.thisWeekMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.03f, 1f),
             animationSpec = ExpressiveMotion.bouncySpatialSpring(),
             label = "this_wk_frac_$idx"
         )
@@ -603,7 +607,7 @@ private fun GamingComparisonCanvasChart(
 
     val lastWeekFractions = days.mapIndexed { idx, day ->
         val frac by animateFloatAsState(
-            targetValue = (day.lastWeekMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.02f, 1f),
+            targetValue = if (day.lastWeekMinutes <= 0) 0f else (day.lastWeekMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.03f, 1f),
             animationSpec = ExpressiveMotion.bouncySpatialSpring(),
             label = "last_wk_frac_$idx"
         )

@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan for Sentinal's Rust Core Engine & Kotlin Android Bridge architecture, covering the Focus State Machine & Schedule Evaluator, Notification Priority Classifier & Focus Rules Engine, Call Bouncer Cooldown & Repeat-Caller Matcher, and an in-app Rust Core Diagnostics & Inspector panel.",
-  "updatedAt":  "2026-11-10T21:10:45.113421062Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

@@ -3,11 +3,28 @@ name = "sentinal_rust_core"
 version = "1.0.0"
 edition = "2021"
 authors = ["Sentinal Systems Engineering"]
-description = "Deterministic Focus State Machine, Notification Priority Classifier, and Call Bouncer Cooldown Engine for Sentinal Android"
+description = "Deterministic Focus State Machine, Notification Priority Classifier, Call Bouncer Cooldown Engine, and JNI C-ABI Bridge for Sentinal Android"
+license = "Apache-2.0"
 
 [lib]
 name = "sentinal_rust_core"
-crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["jni-bridge"]
+jni-bridge = []
+
+[dependencies]
+# Zero external runtime dependencies required:
+# Raw JNI C-ABI types (`JNIEnv`, `jclass`, `jstring`, `jint`, `jlong`, `jboolean`)
+# are defined directly in `src/jni_bridge.rs` for deterministic, standalone compilation
+# across `cargo test` and `rust-android-gradle` NDK targets (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`).
+
+[profile.dev]
+opt-level = 1
+debug = true
+panic = "unwind"
 
 [profile.release]
 opt-level = 3

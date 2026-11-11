@@ -183,6 +183,8 @@ data class FocusSessionState(
     val perProfileAutoReplyMessages: Map<FocusProfile, String> = emptyMap(),
     val autoDeclineVoipInGame: Boolean = true,
     val suppressHeadsUpBanners: Boolean = true,
+    val callBouncerEnabled: Boolean = true,
+    val repeatCallerCooldownMinutes: Int = 3,
     val networkLevelCallRejection: Boolean = true,
     val autoDeclineVoipCalls: Boolean = true,
     val smartUrgentBreakthroughEnabled: Boolean = true,
@@ -258,12 +260,12 @@ data class FocusSessionState(
         val DEFAULT_CATEGORY_PRIORITIES: Map<NotificationCategory, NotificationPriorityLevel> =
             NotificationCategory.values().associateWith { it.defaultPriority }
         val DEFAULT_CATEGORY_COUNTS: Map<NotificationCategory, Int> = mapOf(
-            NotificationCategory.SECURITY_AND_URGENT to 3,
-            NotificationCategory.DIRECT_MESSAGES to 14,
-            NotificationCategory.WORK_AND_CALENDAR to 9,
-            NotificationCategory.SOCIAL_AND_COMMUNITY to 18,
-            NotificationCategory.NEWS_AND_MEDIA to 7,
-            NotificationCategory.PROMOTIONS_AND_DEALS to 12
+            NotificationCategory.SECURITY_AND_URGENT to 0,
+            NotificationCategory.DIRECT_MESSAGES to 0,
+            NotificationCategory.WORK_AND_CALENDAR to 0,
+            NotificationCategory.SOCIAL_AND_COMMUNITY to 0,
+            NotificationCategory.NEWS_AND_MEDIA to 0,
+            NotificationCategory.PROMOTIONS_AND_DEALS to 0
         )
     }
 }
@@ -326,10 +328,13 @@ class FocusStateManager private constructor(context: Context) {
     private val _activeProfileFlow = MutableStateFlow(_state.value.activeProfile)
     val activeProfileFlow: StateFlow<FocusProfile> = _activeProfileFlow.asStateFlow()
 
-    private val _weeklyStatsFlow = MutableStateFlow(calculateWeeklyStats())
+    @Volatile
+    private var latestRoomSessions: List<FocusSessionHistoryEntity> = emptyList()
+
+    private val _weeklyStatsFlow = MutableStateFlow(calculateWeeklyStats(emptyList()))
     val weeklyStatsFlow: StateFlow<WeeklyShieldSummary> = _weeklyStatsFlow.asStateFlow()
 
-    private val _gamingWeeklyComparisonFlow = MutableStateFlow(calculateGamingWeeklyComparison())
+    private val _gamingWeeklyComparisonFlow = MutableStateFlow(calculateGamingWeeklyComparison(emptyList()))
     val gamingWeeklyComparisonFlow: StateFlow<GamingWeeklyComparisonSummary> = _gamingWeeklyComparisonFlow.asStateFlow()
 
     val focusHistoryRepository: FocusSessionHistoryRepository by lazy {
@@ -338,10 +343,26 @@ class FocusStateManager private constructor(context: Context) {
         )
     }
 
+    val rustEngineClient: com.example.core.jni.SentinalRustEngineClient =
+        com.example.core.jni.SentinalRustEngineClient.getInstance()
+
+    val rustFocusStateMachine: com.example.core.jni.RustFocusStateMachineInterface
+        get() = rustEngineClient
+
+    val rustNotificationClassifier: com.example.core.jni.RustNotificationClassifierInterface
+        get() = rustEngineClient
+
+    val rustCallBouncer: com.example.core.jni.RustCallBouncerInterface
+        get() = rustEngineClient
+
     init {
         scope.launch {
             runCatching {
-                focusHistoryRepository.seedInitialSessionsIfEmpty()
+                focusHistoryRepository.allSessionsFlow.collect { roomSessions ->
+                    latestRoomSessions = roomSessions
+                    _weeklyStatsFlow.value = calculateWeeklyStats(roomSessions)
+                    _gamingWeeklyComparisonFlow.value = calculateGamingWeeklyComparison(roomSessions)
+                }
             }
         }
         scope.launch {
@@ -349,6 +370,7 @@ class FocusStateManager private constructor(context: Context) {
                 if (_activeProfileFlow.value != sessionState.activeProfile) {
                     _activeProfileFlow.value = sessionState.activeProfile
                 }
+                _gamingWeeklyComparisonFlow.value = calculateGamingWeeklyComparison(latestRoomSessions)
             }
         }
         // Always reset test and breakthrough caches on startup so users never need to clear data
@@ -398,6 +420,11 @@ class FocusStateManager private constructor(context: Context) {
 
         val autoDeclineVoipInGame = prefs.getBoolean(KEY_AUTO_DECLINE_VOIP_GAME, true)
         val suppressHeadsUp = prefs.getBoolean(KEY_SUPPRESS_HEADS_UP, true)
+        val callBouncerEnabled = prefs.getBoolean(KEY_CALL_BOUNCER_ENABLED, true)
+        val repeatCallerCooldownMins = prefs.getInt(
+            KEY_REPEAT_CALLER_COOLDOWN_MINS,
+            DEFAULT_REPEAT_CALLER_COOLDOWN_MINUTES
+        ).coerceIn(MIN_REPEAT_CALLER_COOLDOWN_MINUTES, MAX_REPEAT_CALLER_COOLDOWN_MINUTES)
         val networkRejection = prefs.getBoolean(KEY_NETWORK_REJECTION, true)
         val autoDeclineVoip = prefs.getBoolean(KEY_AUTO_DECLINE_VOIP, true)
         val smartUrgent = prefs.getBoolean(KEY_SMART_URGENT, true)
@@ -416,7 +443,7 @@ class FocusStateManager private constructor(context: Context) {
         val shieldedNotifs = prefs.getInt(KEY_SHIELDED_NOTIFS, 0)
         val customDurationMins = prefs.getInt(KEY_CUSTOM_DURATION_MINS, 60).coerceIn(5, 480)
         val startTime = if (prefs.contains(KEY_SESSION_START)) prefs.getLong(KEY_SESSION_START, 0L).takeIf { it > 0 } else null
-        val seedIntercepts = createSeedIntercepts()
+        val seedIntercepts = emptyList<InterceptEvent>()
 
         val workSchedEnabled = prefs.getBoolean(KEY_WORK_SCHEDULE_ENABLED, false)
         val workStartHour = prefs.getInt(KEY_WORK_START_HOUR, 9).coerceIn(0, 23)
@@ -463,9 +490,9 @@ class FocusStateManager private constructor(context: Context) {
         val categoryCounts = mutableMapOf<NotificationCategory, Int>()
         for (cat in NotificationCategory.values()) {
             val defaultCount = FocusSessionState.DEFAULT_CATEGORY_COUNTS[cat] ?: 0
-            categoryCounts[cat] = prefs.getInt("key_category_count_${cat.name}", defaultCount)
+            categoryCounts[cat] = prefs.getInt("user_category_count_${cat.name}", defaultCount)
         }
-        val seedCategorized = createSeedCategorizedNotifications(categoryPriorities, priorityRules)
+        val seedCategorized = emptyList<CategorizedNotificationEvent>()
 
         // If saved session already expired in the past, reset to OFF and clean persistent state
         if (profile != FocusProfile.OFF && expiresAt != null && System.currentTimeMillis() >= expiresAt) {
@@ -492,6 +519,8 @@ class FocusStateManager private constructor(context: Context) {
                 perProfileAutoReplyMessages = perProfileMessages,
                 autoDeclineVoipInGame = autoDeclineVoipInGame,
                 suppressHeadsUpBanners = suppressHeadsUp,
+                callBouncerEnabled = callBouncerEnabled,
+                repeatCallerCooldownMinutes = repeatCallerCooldownMins,
                 networkLevelCallRejection = networkRejection,
                 autoDeclineVoipCalls = autoDeclineVoip,
                 smartUrgentBreakthroughEnabled = smartUrgent,
@@ -550,6 +579,8 @@ class FocusStateManager private constructor(context: Context) {
             perProfileAutoReplyMessages = perProfileMessages,
             autoDeclineVoipInGame = autoDeclineVoipInGame,
             suppressHeadsUpBanners = suppressHeadsUp,
+            callBouncerEnabled = callBouncerEnabled,
+            repeatCallerCooldownMinutes = repeatCallerCooldownMins,
             networkLevelCallRejection = networkRejection,
             autoDeclineVoipCalls = autoDeclineVoip,
             smartUrgentBreakthroughEnabled = smartUrgent,
@@ -721,6 +752,45 @@ class FocusStateManager private constructor(context: Context) {
     fun isStrictGamingLockdown(): Boolean = _state.value.strictGamingLockdownEnabled
 
     fun isAllowRepeatCallers(): Boolean = _state.value.allowRepeatCallersEnabled
+
+    fun isCallBouncerEnabled(): Boolean = _state.value.callBouncerEnabled
+
+    fun setCallBouncerEnabled(enabled: Boolean) {
+        val updated = _state.value.copy(callBouncerEnabled = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_CALL_BOUNCER_ENABLED, enabled).apply()
+        Log.d(TAG, "Call Bouncer engine enabled set to: $enabled")
+        if (updated.activeProfile != FocusProfile.OFF) {
+            runCatching { com.example.services.ZenShieldForegroundService.update(appContext) }
+        }
+    }
+
+    fun toggleCallBouncer(): Boolean {
+        val next = !_state.value.callBouncerEnabled
+        setCallBouncerEnabled(next)
+        return next
+    }
+
+    fun getRepeatCallerCooldownMinutes(): Int = _state.value.repeatCallerCooldownMinutes
+
+    fun getRepeatCallerCooldownMillis(): Long {
+        val mins = _state.value.repeatCallerCooldownMinutes.coerceIn(
+            MIN_REPEAT_CALLER_COOLDOWN_MINUTES,
+            MAX_REPEAT_CALLER_COOLDOWN_MINUTES
+        )
+        return mins * 60_000L
+    }
+
+    fun setRepeatCallerCooldownMinutes(minutes: Int) {
+        val clamped = minutes.coerceIn(
+            MIN_REPEAT_CALLER_COOLDOWN_MINUTES,
+            MAX_REPEAT_CALLER_COOLDOWN_MINUTES
+        )
+        val updated = _state.value.copy(repeatCallerCooldownMinutes = clamped)
+        _state.value = updated
+        prefs.edit().putInt(KEY_REPEAT_CALLER_COOLDOWN_MINS, clamped).apply()
+        Log.d(TAG, "Repeat caller cooldown minutes set to: $clamped (${clamped * 60}s)")
+    }
 
     fun isDeclineAllCallsRegardless(): Boolean = _state.value.declineAllCallsRegardless
 
@@ -1233,12 +1303,7 @@ class FocusStateManager private constructor(context: Context) {
         val current = _state.value
         if (current.activeProfile != FocusProfile.GAMING) return
 
-        // Accrue elapsed Gaming Mode session duration (minimum 1 minute when a session ends)
         val endedAt = System.currentTimeMillis()
-        current.sessionStartTimeMillis?.let { startedAt ->
-            val elapsedMinutes = ((endedAt - startedAt) / 60_000L).toInt().coerceAtLeast(1)
-            recordGamingSessionMinutes(elapsedMinutes, dayOffsetFromToday = 0)
-        }
         recordCompletedFocusSessionToRoom(current, endedAt)
 
         val targetProfile = if (current.isAutoTriggeredByGame) {
@@ -1298,9 +1363,10 @@ class FocusStateManager private constructor(context: Context) {
         val key = "voip_repeat_${normalizeCallerLookupKey(norm)}"
         val lastTimestamp = cachePrefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
-        val isWithinThreeMinutes = lastTimestamp > 0L && (now - lastTimestamp) <= THREE_MINUTES_MS
+        val cooldownWindowMs = getRepeatCallerCooldownMillis()
+        val isWithinCooldownWindow = lastTimestamp > 0L && (now - lastTimestamp) <= cooldownWindowMs
 
-        if (isWithinThreeMinutes) {
+        if (isWithinCooldownWindow) {
             cachePrefs.edit().remove(key).apply()
             return true
         }
@@ -1323,9 +1389,10 @@ class FocusStateManager private constructor(context: Context) {
         val key = "last_call_timestamp_$normalized"
         val lastTimestamp = prefs.getLong(key, 0L)
         val now = System.currentTimeMillis()
-        val isWithinThreeMinutes = lastTimestamp > 0L && (now - lastTimestamp) <= THREE_MINUTES_MS
+        val cooldownWindowMs = getRepeatCallerCooldownMillis()
+        val isWithinCooldownWindow = lastTimestamp > 0L && (now - lastTimestamp) <= cooldownWindowMs
 
-        if (isWithinThreeMinutes) {
+        if (isWithinCooldownWindow) {
             prefs.edit().remove(key).apply()
             return true
         }
@@ -1405,15 +1472,6 @@ class FocusStateManager private constructor(context: Context) {
         val hadPendingGamePrompt = currentBeforeChange.pendingGameActivationPackage != null && profile != FocusProfile.GAMING
 
         val now = System.currentTimeMillis()
-        // If transitioning out of an active GAMING session, accrue elapsed minutes into today's Gaming Mode total
-        if (wasGaming) {
-            currentBeforeChange.sessionStartTimeMillis?.let { startedAt ->
-                val elapsedMinutes = ((now - startedAt) / 60_000L).toInt()
-                if (elapsedMinutes >= 1) {
-                    recordGamingSessionMinutes(elapsedMinutes, dayOffsetFromToday = 0)
-                }
-            }
-        }
         // Log any completed focus session into Room database when switching away or turning off
         if (currentBeforeChange.activeProfile != FocusProfile.OFF && currentBeforeChange.activeProfile != profile) {
             recordCompletedFocusSessionToRoom(currentBeforeChange, now)
@@ -2445,7 +2503,7 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putInt(KEY_SHIELDED_CALLS, count).apply()
 
         val todayKey = getTodayDateKey()
-        val callsKey = "daily_calls_$todayKey"
+        val callsKey = "user_daily_calls_$todayKey"
         val currentDaily = prefs.getInt(callsKey, 0) + 1
         prefs.edit().putInt(callsKey, currentDaily).apply()
         _weeklyStatsFlow.value = calculateWeeklyStats()
@@ -2479,7 +2537,7 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putInt(KEY_SHIELDED_NOTIFS, count).apply()
 
         val todayKey = getTodayDateKey()
-        val notifsKey = "daily_notifs_$todayKey"
+        val notifsKey = "user_daily_notifs_$todayKey"
         val currentDaily = prefs.getInt(notifsKey, 0) + 1
         prefs.edit().putInt(notifsKey, currentDaily).apply()
         _weeklyStatsFlow.value = calculateWeeklyStats()
@@ -2604,6 +2662,37 @@ class FocusStateManager private constructor(context: Context) {
     }
 
     /**
+     * Evaluates a Focus State Machine transition on the current session state via the
+     * Rust JNI interface ([com.example.core.jni.RustFocusStateMachineInterface]).
+     */
+    fun evaluateFocusStateMachineViaRust(
+        event: SentinalRustCoreBridge.RustFocusEvent
+    ): SentinalRustCoreBridge.RustTransitionOutcome {
+        val currentRustState = SentinalRustCoreBridge.RustFocusEngineState.fromSessionState(_state.value)
+        return rustFocusStateMachine.stepStateMachine(currentRustState, event)
+    }
+
+    /**
+     * Evaluates an incoming notification via the Rust JNI interface
+     * ([com.example.core.jni.RustNotificationClassifierInterface]).
+     */
+    fun evaluateNotificationViaRust(
+        packageName: String,
+        title: String,
+        body: String
+    ): SentinalRustCoreBridge.RustClassificationOutcome {
+        val s = _state.value
+        return rustNotificationClassifier.classifyAndEvaluateNotification(
+            packageName = packageName,
+            title = title,
+            body = body,
+            priorityRules = s.priorityLevelRules,
+            categoryOverrides = s.categoryPriorityOverrides,
+            smartUrgentBreakthroughEnabled = s.smartUrgentBreakthroughEnabled
+        )
+    }
+
+    /**
      * Categorizes an incoming notification based on its package name, Android Notification.category,
      * title, and text content.
      */
@@ -2717,7 +2806,7 @@ class FocusStateManager private constructor(context: Context) {
             categorizedNotifications = updatedFeed,
             categoryInterceptCounts = updatedCounts
         )
-        prefs.edit().putInt("key_category_count_${category.name}", newCategoryCount).apply()
+        prefs.edit().putInt("user_category_count_${category.name}", newCategoryCount).apply()
 
         return action
     }
@@ -2803,195 +2892,128 @@ class FocusStateManager private constructor(context: Context) {
         return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
     }
 
-    fun getWeeklyStats(): WeeklyShieldSummary = calculateWeeklyStats()
-
-    fun calculateWeeklyStats(): WeeklyShieldSummary {
-        val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
-        val fullFormat = SimpleDateFormat("EEEE, MMM d", Locale.getDefault())
-        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val todayKey = keyFormat.format(Date())
-
-        val baselineNotifs = listOf(9, 14, 18, 11, 24, 16, 8)
-        val baselineCalls = listOf(2, 4, 3, 1, 5, 3, 2)
-
-        val daysList = mutableListOf<DailyShieldStats>()
-        var sumNotifs = 0
-        var sumCalls = 0
-        var maxTotal = -1
-        var peakDay = "None"
-
+    fun getDailyStandaloneNotificationsMap(nowMillis: Long = System.currentTimeMillis()): Map<String, Int> {
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val map = mutableMapOf<String, Int>()
         for (i in 6 downTo 0) {
             val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = nowMillis
                 add(java.util.Calendar.DAY_OF_YEAR, -i)
             }
             val key = keyFormat.format(cal.time)
-            val isToday = (key == todayKey)
-            val notifsKey = "daily_notifs_$key"
-            val callsKey = "daily_calls_$key"
+            map[key] = prefs.getInt("user_daily_notifs_$key", 0)
+        }
+        return map
+    }
 
-            val notifs = if (prefs.contains(notifsKey)) {
-                prefs.getInt(notifsKey, 0)
-            } else {
-                val base = baselineNotifs.getOrElse(6 - i) { 6 }
-                prefs.edit().putInt(notifsKey, base).apply()
-                base
+    fun getDailyStandaloneCallsMap(nowMillis: Long = System.currentTimeMillis()): Map<String, Int> {
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val map = mutableMapOf<String, Int>()
+        for (i in 6 downTo 0) {
+            val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = nowMillis
+                add(java.util.Calendar.DAY_OF_YEAR, -i)
             }
+            val key = keyFormat.format(cal.time)
+            map[key] = prefs.getInt("user_daily_calls_$key", 0)
+        }
+        return map
+    }
 
-            val calls = if (prefs.contains(callsKey)) {
-                prefs.getInt(callsKey, 0)
-            } else {
-                val base = baselineCalls.getOrElse(6 - i) { 2 }
-                prefs.edit().putInt(callsKey, base).apply()
-                base
-            }
-
-            val dayShort = dayFormat.format(cal.time)
-            val dayFull = fullFormat.format(cal.time)
-
-            daysList.add(
-                DailyShieldStats(
-                    dayKey = key,
-                    dayShort = dayShort,
-                    dayFull = dayFull,
-                    isToday = isToday,
-                    silencedNotifications = notifs,
-                    declinedCalls = calls
-                )
-            )
-
-            sumNotifs += notifs
-            sumCalls += calls
-            val total = notifs + calls
-            if (total > maxTotal) {
-                maxTotal = total
-                peakDay = dayShort
-            }
+    fun getDailyExtraGamingMinutesMap(nowMillis: Long = System.currentTimeMillis()): Map<String, Int> {
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val todayKey = keyFormat.format(Date(nowMillis))
+        val currentState = _state.value
+        val liveGamingMinutesToday = if (
+            currentState.activeProfile == FocusProfile.GAMING &&
+            currentState.sessionStartTimeMillis != null
+        ) {
+            ((nowMillis - currentState.sessionStartTimeMillis) / 60_000L)
+                .toInt()
+                .coerceAtLeast(1)
+        } else {
+            0
         }
 
-        return WeeklyShieldSummary(
-            days = daysList,
-            totalSilencedNotifications = sumNotifs,
-            totalDeclinedCalls = sumCalls,
-            peakDayLabel = peakDay,
-            averageSilencedPerDay = sumNotifs / 7f,
-            averageCallsPerDay = sumCalls / 7f
+        val map = mutableMapOf<String, Int>()
+        for (i in 13 downTo 0) {
+            val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = nowMillis
+                add(java.util.Calendar.DAY_OF_YEAR, -i)
+            }
+            val key = keyFormat.format(cal.time)
+            val stored = prefs.getInt("user_daily_gaming_mins_$key", 0)
+            map[key] = if (key == todayKey) stored + liveGamingMinutesToday else stored
+        }
+        return map
+    }
+
+    fun getWeeklyStats(): WeeklyShieldSummary = calculateWeeklyStats(latestRoomSessions)
+
+    fun calculateWeeklyStats(
+        roomSessions: List<FocusSessionHistoryEntity> = latestRoomSessions
+    ): WeeklyShieldSummary {
+        val nowMillis = System.currentTimeMillis()
+        return FocusSessionHistoryRepository.aggregateWeeklyShieldSummary(
+            sessions = roomSessions,
+            nowMillis = nowMillis,
+            extraNotifsByDateKey = getDailyStandaloneNotificationsMap(nowMillis),
+            extraCallsByDateKey = getDailyStandaloneCallsMap(nowMillis)
         )
     }
 
-    fun getGamingWeeklyComparison(): GamingWeeklyComparisonSummary = calculateGamingWeeklyComparison()
+    fun getGamingWeeklyComparison(): GamingWeeklyComparisonSummary =
+        calculateGamingWeeklyComparison(latestRoomSessions)
 
     /**
      * Records additional minutes spent in Gaming Mode for a given day offset (`0` = today,
-     * `1..6` = earlier this week, `7..13` = corresponding day last week) and updates
-     * `gamingWeeklyComparisonFlow`.
+     * `1..6` = earlier this week, `7..13` = corresponding day last week), persists the session
+     * to Room when appropriate, and updates `gamingWeeklyComparisonFlow`.
      */
-    fun recordGamingSessionMinutes(minutesToAdd: Int, dayOffsetFromToday: Int = 0) {
+    fun recordGamingSessionMinutes(
+        minutesToAdd: Int,
+        dayOffsetFromToday: Int = 0,
+        alsoInsertIntoRoom: Boolean = true
+    ) {
         if (minutesToAdd <= 0) return
-        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val cal = java.util.Calendar.getInstance().apply {
             add(java.util.Calendar.DAY_OF_YEAR, -dayOffsetFromToday.coerceIn(0, 30))
         }
         val dateKey = keyFormat.format(cal.time)
-        val prefKey = "daily_gaming_mins_$dateKey"
+        val prefKey = "user_daily_gaming_mins_$dateKey"
         val currentMins = prefs.getInt(prefKey, 0)
         prefs.edit().putInt(prefKey, currentMins + minutesToAdd).apply()
-        _gamingWeeklyComparisonFlow.value = calculateGamingWeeklyComparison()
+        if (alsoInsertIntoRoom) {
+            val endMs = cal.timeInMillis
+            val startMs = endMs - (minutesToAdd * 60_000L)
+            scope.launch {
+                runCatching {
+                    focusHistoryRepository.logSession(
+                        profile = FocusProfile.GAMING,
+                        startTimeMillis = startMs,
+                        endTimeMillis = endMs,
+                        durationMinutesOverride = minutesToAdd,
+                        triggerSource = "Gaming Session"
+                    )
+                }
+            }
+        }
+        _gamingWeeklyComparisonFlow.value = calculateGamingWeeklyComparison(latestRoomSessions)
     }
 
     /**
      * Computes the 7-day Gaming Mode duration summary comparing This Week (last 7 days)
-     * against Last Week (prior 7 days).
+     * against Last Week (prior 7 days) using Room focus session rows and live Gaming Mode state.
      */
-    fun calculateGamingWeeklyComparison(): GamingWeeklyComparisonSummary {
-        val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
-        val fullFormat = SimpleDateFormat("EEE, MMM d", Locale.getDefault())
-        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val todayKey = keyFormat.format(Date())
-
-        // Realistic baseline minutes per day for This Week vs Last Week when not yet recorded
-        val baselineThisWeekMins = listOf(45, 75, 60, 95, 130, 165, 85)
-        val baselineLastWeekMins = listOf(60, 50, 80, 70, 110, 140, 65)
-
-        val comparisonDays = mutableListOf<DailyGamingComparison>()
-        var sumThisWeek = 0
-        var sumLastWeek = 0
-        var peakDayLabel = "None"
-        var peakDayMins = -1
-
-        for (i in 6 downTo 0) {
-            val idx = 6 - i
-            val thisWeekCal = java.util.Calendar.getInstance().apply {
-                add(java.util.Calendar.DAY_OF_YEAR, -i)
-            }
-            val lastWeekCal = java.util.Calendar.getInstance().apply {
-                add(java.util.Calendar.DAY_OF_YEAR, -(i + 7))
-            }
-
-            val keyThis = keyFormat.format(thisWeekCal.time)
-            val keyLast = keyFormat.format(lastWeekCal.time)
-            val isToday = (keyThis == todayKey)
-
-            val prefKeyThis = "daily_gaming_mins_$keyThis"
-            val prefKeyLast = "daily_gaming_mins_$keyLast"
-
-            val minsThis = if (prefs.contains(prefKeyThis)) {
-                prefs.getInt(prefKeyThis, 0)
-            } else {
-                val seed = baselineThisWeekMins.getOrElse(idx) { 60 }
-                prefs.edit().putInt(prefKeyThis, seed).apply()
-                seed
-            }
-
-            val minsLast = if (prefs.contains(prefKeyLast)) {
-                prefs.getInt(prefKeyLast, 0)
-            } else {
-                val seed = baselineLastWeekMins.getOrElse(idx) { 55 }
-                prefs.edit().putInt(prefKeyLast, seed).apply()
-                seed
-            }
-
-            val dayShort = dayFormat.format(thisWeekCal.time)
-            val dayFullThis = fullFormat.format(thisWeekCal.time)
-            val dayFullLast = fullFormat.format(lastWeekCal.time)
-
-            comparisonDays.add(
-                DailyGamingComparison(
-                    dayIndex = idx,
-                    dayKeyThisWeek = keyThis,
-                    dayKeyLastWeek = keyLast,
-                    dayShort = dayShort,
-                    dayFullThisWeek = dayFullThis,
-                    dayFullLastWeek = dayFullLast,
-                    isToday = isToday,
-                    thisWeekMinutes = minsThis,
-                    lastWeekMinutes = minsLast
-                )
-            )
-
-            sumThisWeek += minsThis
-            sumLastWeek += minsLast
-            if (minsThis > peakDayMins) {
-                peakDayMins = minsThis
-                peakDayLabel = dayShort
-            }
-        }
-
-        val deltaMins = sumThisWeek - sumLastWeek
-        val deltaPct = if (sumLastWeek > 0) {
-            (deltaMins.toFloat() / sumLastWeek.toFloat()) * 100f
-        } else {
-            0f
-        }
-
-        return GamingWeeklyComparisonSummary(
-            days = comparisonDays,
-            thisWeekTotalMinutes = sumThisWeek,
-            lastWeekTotalMinutes = sumLastWeek,
-            deltaMinutes = deltaMins,
-            deltaPercentage = deltaPct,
-            peakDayThisWeekLabel = peakDayLabel,
-            peakDayThisWeekMinutes = peakDayMins.coerceAtLeast(0),
-            averageDailyMinutesThisWeek = sumThisWeek / 7f
+    fun calculateGamingWeeklyComparison(
+        roomSessions: List<FocusSessionHistoryEntity> = latestRoomSessions
+    ): GamingWeeklyComparisonSummary {
+        val nowMillis = System.currentTimeMillis()
+        return FocusSessionHistoryRepository.aggregateGamingWeeklyComparison(
+            sessions = roomSessions,
+            nowMillis = nowMillis,
+            extraMinutesByDateKey = getDailyExtraGamingMinutesMap(nowMillis)
         )
     }
 
@@ -3403,6 +3425,8 @@ class FocusStateManager private constructor(context: Context) {
             .putStringSet(KEY_WHITELISTED_PKGS, state.whitelistedPackages)
             .putBoolean(KEY_AUTO_DECLINE_VOIP_GAME, state.autoDeclineVoipInGame)
             .putBoolean(KEY_SUPPRESS_HEADS_UP, state.suppressHeadsUpBanners)
+            .putBoolean(KEY_CALL_BOUNCER_ENABLED, state.callBouncerEnabled)
+            .putInt(KEY_REPEAT_CALLER_COOLDOWN_MINS, state.repeatCallerCooldownMinutes)
             .putBoolean(KEY_NETWORK_REJECTION, state.networkLevelCallRejection)
             .putBoolean(KEY_AUTO_DECLINE_VOIP, state.autoDeclineVoipCalls)
             .putBoolean(KEY_SMART_URGENT, state.smartUrgentBreakthroughEnabled)
@@ -3467,6 +3491,13 @@ class FocusStateManager private constructor(context: Context) {
         if (profile == FocusProfile.OFF) return
         val startedAt = previousState.sessionStartTimeMillis ?: (endedAtMillis - 60_000L)
         val elapsedMinutes = ((endedAtMillis - startedAt) / 60_000L).toInt().coerceAtLeast(1)
+        if (profile == FocusProfile.GAMING) {
+            recordGamingSessionMinutes(
+                minutesToAdd = elapsedMinutes,
+                dayOffsetFromToday = 0,
+                alsoInsertIntoRoom = false
+            )
+        }
         val triggerSource = when {
             previousState.isAutoTriggeredByGame -> "Auto Game Detector"
             previousState.isAutoTriggeredByWorkSchedule || previousState.isAutoTriggeredBySleepSchedule -> "Scheduled"
@@ -3516,6 +3547,9 @@ class FocusStateManager private constructor(context: Context) {
         const val VOIP_CACHE_PREFS_NAME = "zenshield_voip_cache_prefs"
         const val FIFTEEN_SECONDS_MS = 15_000L
         const val THREE_MINUTES_MS = 180_000L
+        const val MIN_REPEAT_CALLER_COOLDOWN_MINUTES = 1
+        const val MAX_REPEAT_CALLER_COOLDOWN_MINUTES = 15
+        const val DEFAULT_REPEAT_CALLER_COOLDOWN_MINUTES = 3
         const val AUTO_REPLY_COOLDOWN_MS = THREE_MINUTES_MS // 3-minute per-caller cooldown for declined call auto-replies
         const val THIRTY_MINUTES_MS = THREE_MINUTES_MS
         const val GAME_EXIT_DEACTIVATION_DELAY_MS = 15_000L // 15-second grace period after exiting a game
@@ -3534,6 +3568,8 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_BLOCK_REPEATED = "key_block_repeated"
         private const val KEY_STRICT_GAMING = "key_strict_gaming"
         private const val KEY_ALLOW_REPEAT_CALLERS = "key_allow_repeat_callers"
+        private const val KEY_CALL_BOUNCER_ENABLED = "key_call_bouncer_enabled"
+        private const val KEY_REPEAT_CALLER_COOLDOWN_MINS = "key_repeat_caller_cooldown_mins"
         private const val KEY_SILENCE_NOTIFS = "key_silence_notifs"
         private const val KEY_AUTO_REPLY = "key_auto_reply"
         private const val KEY_AUTO_REPLY_TEMPLATE = "key_auto_reply_template"

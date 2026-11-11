@@ -87,6 +87,7 @@ import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,10 +100,14 @@ fun FocusDashboardScreen(
     val context = LocalContext.current
     val hasDndPermission = stateManager.isNotificationPolicyAccessGranted()
     var showSessionHistory by remember { mutableStateOf(false) }
+    val historyViewModel: FocusSessionHistoryViewModel = viewModel(
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
+    )
 
     if (showSessionHistory) {
         FocusSessionHistoryScreen(
             stateManager = stateManager,
+            historyViewModel = historyViewModel,
             onBack = { showSessionHistory = false },
             modifier = modifier
         )
@@ -222,12 +227,21 @@ fun FocusDashboardScreen(
             item {
                 FocusSessionHistoryDashboardCard(
                     stateManager = stateManager,
+                    historyViewModel = historyViewModel,
                     onOpenFullScreen = { showSessionHistory = true }
                 )
             }
 
             item {
                 GamingModeWeeklyComparisonCard(
+                    stateManager = stateManager,
+                    historyViewModel = historyViewModel
+                )
+            }
+
+            item {
+                CallBouncerEngineCard(
+                    state = state,
                     stateManager = stateManager
                 )
             }

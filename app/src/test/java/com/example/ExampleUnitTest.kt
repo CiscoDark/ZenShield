@@ -253,4 +253,180 @@ class ExampleUnitTest {
         )
         assertFalse(secondCallWithin3m.dispatchAutoReply)
     }
+
+    @Test
+    fun rustJniBridge_interfacesAndWireCodecAreValid() {
+        val client = com.example.core.jni.SentinalRustEngineClient.getInstance()
+        val fsmInterface: com.example.core.jni.RustFocusStateMachineInterface = client
+        val notifInterface: com.example.core.jni.RustNotificationClassifierInterface = client
+        val callInterface: com.example.core.jni.RustCallBouncerInterface = client
+
+        // 1. Focus State Machine interface & JNI wire codec round-trip
+        val baseState = com.example.core.SentinalRustCoreBridge.RustFocusEngineState(
+            activeMode = FocusProfile.GAMING,
+            activeGamePackage = "com.miHoYo.GenshinImpact",
+            sessionStartMs = 5_000_000L
+        )
+        val transition = fsmInterface.stepStateMachine(
+            current = baseState,
+            event = com.example.core.SentinalRustCoreBridge.RustFocusEvent.ManualSetMode(
+                targetMode = FocusProfile.OFF,
+                nowMs = 6_800_000L
+            )
+        )
+        val encodedFsmWire = com.example.core.jni.SentinalRustJniWireCodec.encodeTransitionOutcomeToWire(transition)
+        val decodedFsm = com.example.core.jni.SentinalRustJniWireCodec.decodeTransitionOutcomeFromWire(
+            baseState = baseState,
+            wirePayload = encodedFsmWire
+        )
+        assertEquals(FocusProfile.OFF, decodedFsm.state.activeMode)
+        assertTrue(decodedFsm.state.manuallyDismissedGamingWhilstInGame)
+        assertEquals("com.miHoYo.GenshinImpact", decodedFsm.state.declinedGamePackageForSession)
+        assertEquals(transition.commands.size, decodedFsm.commands.size)
+
+        // 2. Notification Classifier interface & JNI wire codec round-trip
+        val classification = notifInterface.classifyAndEvaluateNotification(
+            packageName = "com.Slack",
+            title = "#prod-incidents",
+            body = "URGENT: PagerDuty deployment alert"
+        )
+        val encodedNotifWire = com.example.core.jni.SentinalRustJniWireCodec.encodeClassificationOutcomeToWire(classification)
+        val decodedNotif = com.example.core.jni.SentinalRustJniWireCodec.decodeClassificationOutcomeFromWire(encodedNotifWire)
+        assertEquals(com.example.core.NotificationCategory.SECURITY_AND_URGENT, decodedNotif.category)
+        assertEquals(com.example.core.NotificationPriorityLevel.CRITICAL, decodedNotif.priority)
+        assertEquals(com.example.core.GlobalFocusRuleAction.ALLOW_ALL, decodedNotif.action)
+        assertTrue(decodedNotif.matchedUrgentBreakthrough)
+
+        // 3. Call Bouncer interface & JNI wire codec round-trip
+        val callDecision = callInterface.evaluateIncomingCall(
+            rawCaller = "+1 (415) 555-0199",
+            isStarredContact = false,
+            lastIncomingCallMs = null,
+            lastOutgoingCallToCallerMs = null,
+            lastAutoReplyToCallerMs = null,
+            nowMs = 9_000_000L
+        )
+        val encodedCallWire = com.example.core.jni.SentinalRustJniWireCodec.encodeCallBounceDecisionToWire(callDecision)
+        val decodedCall = com.example.core.jni.SentinalRustJniWireCodec.decodeCallBounceDecisionFromWire(encodedCallWire)
+        assertEquals("155550199", decodedCall.normalizedCallerKey)
+        assertEquals(callDecision.filterAction, decodedCall.filterAction)
+        assertTrue(decodedCall.dispatchAutoReply)
+    }
+
+    @Test
+    fun reactiveRoomDaoFlow_automaticallyRecomputesBarAndLineChartSeriesOnInsert() = kotlinx.coroutines.runBlocking {
+        val backingFlow = kotlinx.coroutines.flow.MutableStateFlow<List<com.example.core.FocusSessionHistoryEntity>>(emptyList())
+        val fakeDao = object : com.example.core.FocusSessionHistoryDao {
+            private var nextId = 1L
+            override fun getAllSessionsFlow(): kotlinx.coroutines.flow.Flow<List<com.example.core.FocusSessionHistoryEntity>> = backingFlow
+            override fun getSessionsByProfileFlow(profileId: String) = backingFlow
+            override fun getSessionsSinceFlow(sinceMillis: Long) = backingFlow
+            override suspend fun getSessionCount(): Int = backingFlow.value.size
+            override suspend fun insertSession(session: com.example.core.FocusSessionHistoryEntity): Long {
+                val id = nextId++
+                backingFlow.value = listOf(session.copy(id = id)) + backingFlow.value
+                return id
+            }
+            override suspend fun insertSessions(sessions: List<com.example.core.FocusSessionHistoryEntity>) {
+                backingFlow.value = sessions + backingFlow.value
+            }
+            override suspend fun deleteSessionById(id: Long) {
+                backingFlow.value = backingFlow.value.filterNot { it.id == id }
+            }
+            override suspend fun clearAllSessions() {
+                backingFlow.value = emptyList()
+            }
+        }
+
+        val repository = com.example.core.FocusSessionHistoryRepository(fakeDao)
+        val nowMs = System.currentTimeMillis()
+
+        // Initially empty -> 0 minutes across all charts
+        val initialSessions = backingFlow.value
+        assertEquals(0, com.example.core.FocusSessionHistoryRepository.aggregateByMode(initialSessions).sumOf { it.totalMinutes })
+        assertEquals(0, com.example.core.FocusSessionHistoryRepository.aggregateGamingWeeklyComparison(initialSessions, nowMs).thisWeekTotalMinutes)
+        assertEquals(0, com.example.core.FocusSessionHistoryRepository.aggregateWeeklyShieldSummary(initialSessions, nowMs).totalDeclinedCalls)
+
+        // Insert a new 45-minute Gaming session with 3 declined calls and 9 silenced alerts
+        repository.logSession(
+            profile = FocusProfile.GAMING,
+            startTimeMillis = nowMs - 45 * 60_000L,
+            endTimeMillis = nowMs,
+            durationMinutesOverride = 45,
+            triggerSource = "Manual",
+            callsDeclined = 3,
+            alertsSilenced = 9
+        )
+
+        val updatedSessions = backingFlow.value
+        assertEquals(1, updatedSessions.size)
+
+        val modeAllocations = com.example.core.FocusSessionHistoryRepository.aggregateByMode(updatedSessions)
+        val gamingAlloc = modeAllocations.first { it.profile == FocusProfile.GAMING }
+        assertEquals(45, gamingAlloc.totalMinutes)
+        assertEquals(3, gamingAlloc.totalCallsDeclined)
+        assertEquals(9, gamingAlloc.totalAlertsSilenced)
+
+        val dailyBreakdown = com.example.core.FocusSessionHistoryRepository.aggregateDailyBreakdown(updatedSessions, nowMs)
+        assertEquals(45, dailyBreakdown.last().totalMinutes)
+
+        val gamingComparison = com.example.core.FocusSessionHistoryRepository.aggregateGamingWeeklyComparison(updatedSessions, nowMs)
+        assertEquals(45, gamingComparison.thisWeekTotalMinutes)
+
+        val shieldSummary = com.example.core.FocusSessionHistoryRepository.aggregateWeeklyShieldSummary(updatedSessions, nowMs)
+        assertEquals(3, shieldSummary.totalDeclinedCalls)
+        assertEquals(9, shieldSummary.totalSilencedNotifications)
+    }
+
+    @Test
+    fun callBouncerEngine_toggleAndRepeatCallerCooldownSliderAreValid() {
+        val defaultState = com.example.core.FocusSessionState()
+        assertTrue(defaultState.callBouncerEnabled)
+        assertEquals(3, defaultState.repeatCallerCooldownMinutes)
+        assertEquals("3m (180s)", com.example.ui.formatRepeatCallerCooldownLabel(3))
+        assertEquals("10m (600s)", com.example.ui.formatRepeatCallerCooldownLabel(10))
+
+        // 1. When Call Bouncer engine is toggled OFF, incoming calls are allowed through
+        val disabledPolicy = com.example.core.SentinalRustCoreBridge.RustCallPolicyConfig(
+            callBouncerEnabled = false,
+            repeatCallerWindowMs = 300_000L
+        )
+        val allowedWhenDisabled = com.example.core.SentinalRustCoreBridge.evaluateIncomingCall(
+            rawCaller = "+1 (415) 555-0199",
+            isStarredContact = false,
+            lastIncomingCallMs = null,
+            lastOutgoingCallToCallerMs = null,
+            lastAutoReplyToCallerMs = null,
+            nowMs = 1_000_000L,
+            policy = disabledPolicy
+        )
+        assertEquals(
+            com.example.core.SentinalRustCoreBridge.RustCallFilterAction.ALLOW_RING_BREAKTHROUGH,
+            allowedWhenDisabled.filterAction
+        )
+        assertFalse(allowedWhenDisabled.dispatchAutoReply)
+
+        // 2. When Cooldown Slider is adjusted to 10 minutes (600,000 ms), a 2nd call 6 minutes later breaks through
+        val tenMinPolicy = com.example.core.SentinalRustCoreBridge.RustCallPolicyConfig(
+            callBouncerEnabled = true,
+            repeatCallerWindowMs = 10 * 60_000L,
+            allowRepeatCallersWithin3m = true
+        )
+        val secondCallAt6Min = com.example.core.SentinalRustCoreBridge.evaluateIncomingCall(
+            rawCaller = "+1 (415) 555-0199",
+            isStarredContact = false,
+            lastIncomingCallMs = 1_000_000L,
+            lastOutgoingCallToCallerMs = null,
+            lastAutoReplyToCallerMs = 1_000_000L,
+            nowMs = 1_000_000L + (6 * 60_000L),
+            policy = tenMinPolicy
+        )
+        assertEquals(
+            com.example.core.SentinalRustCoreBridge.RustCallFilterAction.ALLOW_RING_BREAKTHROUGH,
+            secondCallAt6Min.filterAction
+        )
+        assertTrue(secondCallAt6Min.reason.contains("600s"))
+    }
 }
+
+

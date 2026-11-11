@@ -53,6 +53,8 @@ import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
 import com.example.core.FocusStateManager
 import com.example.core.SentinalRustCoreBridge
+import com.example.core.jni.SentinalRustEngineClient
+import com.example.core.jni.SentinalRustJniWireCodec
 import com.example.ui.theme.ExpressiveHaptics
 import com.example.ui.theme.JetBrainsMonoFontFamily
 
@@ -62,13 +64,15 @@ enum class RustEngineModule(
 ) {
     FOCUS_FSM("Focus FSM", "focus_fsm.rs"),
     NOTIF_CLASSIFIER("Notif Classifier", "notif_classifier.rs"),
-    CALL_BOUNCER("Call Bouncer", "call_bouncer.rs")
+    CALL_BOUNCER("Call Bouncer", "call_bouncer.rs"),
+    JNI_BRIDGE("JNI Bridge", "jni_bridge.rs")
 }
 
 /**
- * Interactive Rust Core Engine & State Machine Diagnostics Card.
- * Showcases Sentinal's 3 Rust Core modules (`focus_fsm.rs`, `notif_classifier.rs`, `call_bouncer.rs`),
- * allows running live deterministic test vectors, and displays the Rust source code.
+ * Interactive Rust Core Engine & JNI Interface Diagnostics Card.
+ * Showcases Sentinal's Rust Core modules (`focus_fsm.rs`, `notif_classifier.rs`, `call_bouncer.rs`,
+ * and `jni_bridge.rs` / `SentinalRustJni.kt`), allows running live deterministic test vectors
+ * through the Kotlin JNI interfaces, and displays the Rust source code.
  */
 @Composable
 fun RustCoreInspectorCard(
@@ -82,14 +86,14 @@ fun RustCoreInspectorCard(
 
     // Live diagnostic output state
     var lastVectorTitle by remember {
-        mutableStateOf("Game Launch -> Shade Manual Turn-Off Suppression")
+        mutableStateOf("RustFocusStateMachineInterface.stepStateMachine()")
     }
     var lastRustOutput by remember {
         val initialFsm = SentinalRustCoreBridge.RustFocusEngineState(
             activeMode = FocusProfile.GAMING,
             activeGamePackage = "com.supercell.clashofclans"
         )
-        val outcome = SentinalRustCoreBridge.stepFocusStateMachine(
+        val outcome = stateManager.rustFocusStateMachine.stepStateMachine(
             current = initialFsm,
             event = SentinalRustCoreBridge.RustFocusEvent.ManualSetMode(
                 targetMode = FocusProfile.OFF
@@ -155,7 +159,7 @@ fun RustCoreInspectorCard(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "Rust Core Engine",
+                                text = "Rust Core & JNI Bridge",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -175,7 +179,7 @@ fun RustCoreInspectorCard(
                             }
                         }
                         Text(
-                            text = "sentinal_rust_core • Deterministic FSM & Rule Evaluators",
+                            text = "sentinal_rust_core • JNI C-ABI & Kotlin Interfaces",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -207,7 +211,7 @@ fun RustCoreInspectorCard(
                 }
             }
 
-            // 2. Module Selector Chips (focus_fsm.rs | notif_classifier.rs | call_bouncer.rs)
+            // 2. Module Selector Chips (focus_fsm.rs | notif_classifier.rs | call_bouncer.rs | jni_bridge.rs)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -235,6 +239,7 @@ fun RustCoreInspectorCard(
                                     RustEngineModule.FOCUS_FSM -> Icons.Rounded.SportsEsports
                                     RustEngineModule.NOTIF_CLASSIFIER -> Icons.Rounded.Notifications
                                     RustEngineModule.CALL_BOUNCER -> Icons.Rounded.PhoneCallback
+                                    RustEngineModule.JNI_BRIDGE -> Icons.Rounded.Code
                                 },
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
@@ -266,13 +271,13 @@ fun RustCoreInspectorCard(
                                     activeMode = FocusProfile.GAMING,
                                     activeGamePackage = "com.activision.callofduty.shooter"
                                 )
-                                val outcome = SentinalRustCoreBridge.stepFocusStateMachine(
+                                val outcome = stateManager.rustFocusStateMachine.stepStateMachine(
                                     current = currentFsm,
                                     event = SentinalRustCoreBridge.RustFocusEvent.ManualSetMode(
                                         targetMode = FocusProfile.OFF
                                     )
                                 )
-                                lastVectorTitle = "FocusEvent::ManualSetMode(Off) while in Game"
+                                lastVectorTitle = "RustFocusStateMachineInterface.stepStateMachine(Off)"
                                 lastLatencyMicros = outcome.executionMicros
                                 lastRustOutput = buildString {
                                     appendLine("TransitionOutcome {")
@@ -300,7 +305,7 @@ fun RustCoreInspectorCard(
                         FilledTonalButton(
                             onClick = {
                                 ExpressiveHaptics.playSpringTap(context)
-                                val inWindow = SentinalRustCoreBridge.isTimeWithinScheduleWindow(
+                                val inWindow = stateManager.rustFocusStateMachine.isTimeWithinScheduleWindow(
                                     startHour = state.sleepScheduleStartHour,
                                     startMinute = state.sleepScheduleStartMinute,
                                     endHour = state.sleepScheduleEndHour,
@@ -340,7 +345,7 @@ fun RustCoreInspectorCard(
                         FilledTonalButton(
                             onClick = {
                                 ExpressiveHaptics.playSpringTap(context)
-                                val res = SentinalRustCoreBridge.classifyAndEvaluateNotification(
+                                val res = stateManager.rustNotificationClassifier.classifyAndEvaluateNotification(
                                     packageName = "com.google.android.apps.authenticator2",
                                     title = "Security Verification Code",
                                     body = "Your one-time login OTP code is 842-910",
@@ -348,7 +353,7 @@ fun RustCoreInspectorCard(
                                     categoryOverrides = state.categoryPriorityOverrides,
                                     smartUrgentBreakthroughEnabled = state.smartUrgentBreakthroughEnabled
                                 )
-                                lastVectorTitle = "classify_and_evaluate_notification(2FA OTP)"
+                                lastVectorTitle = "RustNotificationClassifierInterface(2FA OTP)"
                                 lastLatencyMicros = res.executionMicros
                                 lastRustOutput = buildString {
                                     appendLine("ClassificationOutcome {")
@@ -376,7 +381,7 @@ fun RustCoreInspectorCard(
                         FilledTonalButton(
                             onClick = {
                                 ExpressiveHaptics.playSpringTap(context)
-                                val res = SentinalRustCoreBridge.classifyAndEvaluateNotification(
+                                val res = stateManager.rustNotificationClassifier.classifyAndEvaluateNotification(
                                     packageName = "com.amazon.mShop.android.shopping",
                                     title = "50% OFF Weekend Flash Sale",
                                     body = "Limited-time coupon expires tonight",
@@ -384,7 +389,7 @@ fun RustCoreInspectorCard(
                                     categoryOverrides = state.categoryPriorityOverrides,
                                     smartUrgentBreakthroughEnabled = state.smartUrgentBreakthroughEnabled
                                 )
-                                lastVectorTitle = "classify_and_evaluate_notification(Promo Alert)"
+                                lastVectorTitle = "RustNotificationClassifierInterface(Promo Alert)"
                                 lastLatencyMicros = res.executionMicros
                                 lastRustOutput = buildString {
                                     appendLine("ClassificationOutcome {")
@@ -415,7 +420,7 @@ fun RustCoreInspectorCard(
                             onClick = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 val now = System.currentTimeMillis()
-                                val decision = SentinalRustCoreBridge.evaluateIncomingCall(
+                                val decision = stateManager.rustCallBouncer.evaluateIncomingCall(
                                     rawCaller = "+1 (415) 555-0199",
                                     isStarredContact = false,
                                     lastIncomingCallMs = now - 75_000L, // 75s ago (< 180s window)
@@ -423,7 +428,7 @@ fun RustCoreInspectorCard(
                                     lastAutoReplyToCallerMs = now - 75_000L,
                                     nowMs = now
                                 )
-                                lastVectorTitle = "evaluate_incoming_call(2nd Call @ +75s <= 180s)"
+                                lastVectorTitle = "RustCallBouncerInterface(2nd Call @ +75s <= 180s)"
                                 lastLatencyMicros = decision.executionMicros
                                 lastRustOutput = buildString {
                                     appendLine("CallBounceDecision {")
@@ -452,7 +457,7 @@ fun RustCoreInspectorCard(
                             onClick = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 val now = System.currentTimeMillis()
-                                val decision = SentinalRustCoreBridge.evaluateIncomingCall(
+                                val decision = stateManager.rustCallBouncer.evaluateIncomingCall(
                                     rawCaller = "+1 (415) 555-0199",
                                     isStarredContact = false,
                                     lastIncomingCallMs = null,
@@ -460,7 +465,7 @@ fun RustCoreInspectorCard(
                                     lastAutoReplyToCallerMs = null,
                                     nowMs = now
                                 )
-                                lastVectorTitle = "evaluate_incoming_call(Recipient Dialed 2m Ago)"
+                                lastVectorTitle = "RustCallBouncerInterface(Recipient Dialed 2m Ago)"
                                 lastLatencyMicros = decision.executionMicros
                                 lastRustOutput = buildString {
                                     appendLine("CallBounceDecision {")
@@ -483,6 +488,87 @@ fun RustCoreInspectorCard(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Test Outgoing Auto-Reply Guard")
+                        }
+                    }
+
+                    RustEngineModule.JNI_BRIDGE -> {
+                        FilledTonalButton(
+                            onClick = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                val baseState = SentinalRustCoreBridge.RustFocusEngineState(
+                                    activeMode = FocusProfile.GAMING,
+                                    activeGamePackage = "com.miHoYo.GenshinImpact"
+                                )
+                                val outcome = stateManager.rustFocusStateMachine.stepStateMachine(
+                                    current = baseState,
+                                    event = SentinalRustCoreBridge.RustFocusEvent.ManualSetMode(
+                                        targetMode = FocusProfile.OFF
+                                    )
+                                )
+                                val wirePayload = SentinalRustJniWireCodec.encodeTransitionOutcomeToWire(outcome)
+                                val decoded = SentinalRustJniWireCodec.decodeTransitionOutcomeFromWire(
+                                    baseState = baseState,
+                                    wirePayload = wirePayload
+                                )
+                                lastVectorTitle = "SentinalRustJniNative.nativeStepFocusStateMachine()"
+                                lastLatencyMicros = outcome.executionMicros
+                                lastRustOutput = buildString {
+                                    appendLine("JniWireRoundTrip {")
+                                    appendLine("  c_abi_wire: \"$wirePayload\",")
+                                    appendLine("  decoded_mode: ${decoded.state.activeMode.id},")
+                                    appendLine("  decoded_commands: ${decoded.commands.size}")
+                                    append("}")
+                                }
+                            },
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("rust_vector_jni_fsm_wire")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Test JNI FSM Wire Codec")
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                val outcome = stateManager.rustNotificationClassifier.classifyAndEvaluateNotification(
+                                    packageName = "com.Slack",
+                                    title = "#prod-incidents",
+                                    body = "URGENT: PagerDuty deployment alert",
+                                    priorityRules = state.priorityLevelRules,
+                                    categoryOverrides = state.categoryPriorityOverrides,
+                                    smartUrgentBreakthroughEnabled = state.smartUrgentBreakthroughEnabled
+                                )
+                                val wirePayload = SentinalRustJniWireCodec.encodeClassificationOutcomeToWire(outcome)
+                                val decoded = SentinalRustJniWireCodec.decodeClassificationOutcomeFromWire(wirePayload)
+                                lastVectorTitle = "SentinalRustJniNative.nativeClassifyNotification()"
+                                lastLatencyMicros = outcome.executionMicros
+                                lastRustOutput = buildString {
+                                    appendLine("JniNotifWireRoundTrip {")
+                                    appendLine("  c_abi_wire: \"$wirePayload\",")
+                                    appendLine("  decoded_category: ${decoded.category.name},")
+                                    appendLine("  decoded_action: ${decoded.action.name}")
+                                    append("}")
+                                }
+                            },
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("rust_vector_jni_notif_wire")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Test JNI Classifier Wire Codec")
                         }
                     }
                 }
@@ -557,6 +643,7 @@ fun RustCoreInspectorCard(
                     RustEngineModule.FOCUS_FSM -> SentinalRustCoreBridge.FOCUS_FSM_RS_SNIPPET
                     RustEngineModule.NOTIF_CLASSIFIER -> SentinalRustCoreBridge.NOTIF_CLASSIFIER_RS_SNIPPET
                     RustEngineModule.CALL_BOUNCER -> SentinalRustCoreBridge.CALL_BOUNCER_RS_SNIPPET
+                    RustEngineModule.JNI_BRIDGE -> SentinalRustEngineClient.JNI_BRIDGE_RS_SNIPPET
                 }
 
                 Surface(

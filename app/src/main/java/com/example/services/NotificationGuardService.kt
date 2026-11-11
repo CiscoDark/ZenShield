@@ -218,9 +218,9 @@ class NotificationGuardService : NotificationListenerService() {
 
             val declineAllRegardless = stateManager.isDeclineAllCallsRegardless()
 
-            // Respect networkLevelCallRejection toggle unless Decline All Calls Lockdown is active
-            if (!declineAllRegardless && !stateManager.state.value.networkLevelCallRejection) {
-                Log.d(TAG, "Cellular call rejection disabled in Rules; skipping hang up for '$callerName'")
+            // Respect master Call Bouncer engine toggle & networkLevelCallRejection toggle unless Decline All Calls Lockdown is active
+            if (!declineAllRegardless && (!stateManager.isCallBouncerEnabled() || !stateManager.state.value.networkLevelCallRejection)) {
+                Log.d(TAG, "Call Bouncer or cellular call rejection disabled; skipping hang up for '$callerName'")
                 return
             }
 
@@ -324,7 +324,7 @@ class NotificationGuardService : NotificationListenerService() {
 
             val declineAllRegardless = stateManager.isDeclineAllCallsRegardless()
 
-            // Check if VoIP auto-decline is enabled for the current mode (unless Decline All Calls Regardless is on)
+            // Check if Call Bouncer engine and VoIP auto-decline are enabled for the current mode (unless Decline All Calls Regardless is on)
             val voipDeclineEnabled = if (activeProfile == FocusProfile.GAMING) {
                 stateManager.state.value.autoDeclineVoipInGame || stateManager.state.value.autoDeclineVoipCalls
             } else if (activeProfile == FocusProfile.CINEMA) {
@@ -332,8 +332,8 @@ class NotificationGuardService : NotificationListenerService() {
             } else {
                 stateManager.state.value.autoDeclineVoipCalls
             }
-            if (!declineAllRegardless && !voipDeclineEnabled) {
-                Log.d(TAG, "VoIP auto-decline is disabled in Rules; allowing VoIP call from '$callerName'")
+            if (!declineAllRegardless && (!stateManager.isCallBouncerEnabled() || !voipDeclineEnabled)) {
+                Log.d(TAG, "Call Bouncer or VoIP auto-decline is disabled; allowing VoIP call from '$callerName'")
                 return
             }
 

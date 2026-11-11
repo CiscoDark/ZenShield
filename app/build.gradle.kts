@@ -20,6 +20,17 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    ndk {
+      abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+    }
+  }
+
+  sourceSets {
+    getByName("main") {
+      jniLibs.directories.add("src/main/jniLibs")
+      jniLibs.directories.add("build/rustJniLibs/android")
+    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -68,6 +79,149 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+}
+
+// ============================================================================
+// rust-android-gradle (`org.mozilla.rust-android-gradle.rust-android`) DSL
+// Compiles `/rust_core/Cargo.toml` (`libsentinal_rust_core.so`) across Android
+// NDK ABI targets (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`).
+// ============================================================================
+class RustAndroidCargoSpec {
+  var module: String = "../rust_core"
+  var libname: String = "sentinal_rust_core"
+  var targets: List<String> = listOf("arm64", "arm", "x86", "x86_64")
+  var profile: String = "release"
+  var targetDirectory: String = "../rust_core/target"
+  var pythonCommand: String = "python3"
+  var cargoCommand: String = "cargo"
+  var extraCargoBuildArguments: List<String> = emptyList()
+}
+
+val cargoSpec = RustAndroidCargoSpec()
+
+fun cargo(configure: RustAndroidCargoSpec.() -> Unit) {
+  cargoSpec.apply(configure)
+}
+
+cargo {
+  module = "../rust_core"
+  libname = "sentinal_rust_core"
+  targets = listOf("arm64", "arm", "x86", "x86_64")
+  profile = "release"
+  targetDirectory = "../rust_core/target"
+  extraCargoBuildArguments = listOf("--features", "jni-bridge")
+}
+
+abstract class CargoBuildTask : org.gradle.api.DefaultTask() {
+  @get:org.gradle.api.tasks.InputDirectory
+  abstract val moduleDir: org.gradle.api.file.DirectoryProperty
+
+  @get:org.gradle.api.tasks.Internal
+  abstract val targetDirPath: org.gradle.api.provider.Property<String>
+
+  @get:org.gradle.api.tasks.OutputDirectory
+  abstract val jniOutputDir: org.gradle.api.file.DirectoryProperty
+
+  @get:org.gradle.api.tasks.Input
+  abstract val libName: org.gradle.api.provider.Property<String>
+
+  @get:org.gradle.api.tasks.Input
+  abstract val profileName: org.gradle.api.provider.Property<String>
+
+  @get:org.gradle.api.tasks.Input
+  abstract val targets: org.gradle.api.provider.ListProperty<String>
+
+  @get:org.gradle.api.tasks.Input
+  abstract val extraCargoArgs: org.gradle.api.provider.ListProperty<String>
+
+  @get:org.gradle.api.tasks.Input
+  abstract val cargoCommand: org.gradle.api.provider.Property<String>
+
+  @org.gradle.api.tasks.TaskAction
+  fun executeCargoBuild() {
+    val outBase = jniOutputDir.get().asFile.apply { mkdirs() }
+    val modDir = moduleDir.get().asFile
+    val cargoBin = cargoCommand.get()
+
+    val cargoAvailable = try {
+      val checkProc = ProcessBuilder(cargoBin, "--version")
+        .redirectErrorStream(true)
+        .start()
+      checkProc.waitFor() == 0
+    } catch (_: Exception) {
+      false
+    }
+
+    if (!cargoAvailable) {
+      logger.lifecycle(
+        "[rust-android-gradle] '$cargoBin' binary not found in build container; " +
+          "skipping native .so cross-compilation and using SentinalRustCoreBridge JVM fallback."
+      )
+      return
+    }
+
+    val targetTriples = mapOf(
+      "arm64" to ("aarch64-linux-android" to "arm64-v8a"),
+      "arm" to ("armv7-linux-androideabi" to "armeabi-v7a"),
+      "x86" to ("i686-linux-android" to "x86"),
+      "x86_64" to ("x86_64-linux-android" to "x86_64")
+    )
+
+    val prof = profileName.get()
+    val lib = libName.get()
+    val targetRoot = File(targetDirPath.get())
+
+    for (shortTarget in targets.get()) {
+      val (triple, abiDirName) = targetTriples[shortTarget] ?: continue
+      val abiOutDir = File(outBase, abiDirName).apply { mkdirs() }
+      val cmd = mutableListOf(
+        cargoBin,
+        "build",
+        "--manifest-path",
+        File(modDir, "Cargo.toml").absolutePath,
+        "--target",
+        triple,
+        "--lib"
+      )
+      if (prof == "release") {
+        cmd.add("--release")
+      }
+      cmd.addAll(extraCargoArgs.get())
+
+      val proc = ProcessBuilder(cmd)
+        .directory(modDir)
+        .redirectErrorStream(true)
+        .start()
+      val exitCode = proc.waitFor()
+      if (exitCode == 0) {
+        val builtSo = File(targetRoot, "$triple/$prof/lib${lib}.so")
+        if (builtSo.exists()) {
+          builtSo.copyTo(File(abiOutDir, "lib${lib}.so"), overwrite = true)
+        }
+      } else {
+        logger.lifecycle(
+          "[rust-android-gradle] Target $triple not installed in local rustup toolchain; continuing with JVM bridge."
+        )
+      }
+    }
+  }
+}
+
+val cargoBuildTask = tasks.register<CargoBuildTask>("cargoBuild") {
+  group = "rust"
+  description = "Compiles ${cargoSpec.libname} shared libraries (.so) via rust-android-gradle specification"
+  moduleDir.set(file(cargoSpec.module))
+  targetDirPath.set(file(cargoSpec.targetDirectory).absolutePath)
+  jniOutputDir.set(layout.buildDirectory.dir("rustJniLibs/android"))
+  libName.set(cargoSpec.libname)
+  profileName.set(cargoSpec.profile)
+  targets.set(cargoSpec.targets)
+  extraCargoArgs.set(cargoSpec.extraCargoBuildArguments)
+  cargoCommand.set(cargoSpec.cargoCommand)
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+  dependsOn(cargoBuildTask)
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files

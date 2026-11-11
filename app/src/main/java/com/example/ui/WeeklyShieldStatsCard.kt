@@ -46,12 +46,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,9 +88,12 @@ private enum class ChartMetricFilter {
 fun WeeklyShieldStatsCard(
     stateManager: FocusStateManager,
     modifier: Modifier = Modifier,
-    showSimulationControls: Boolean = true
+    showSimulationControls: Boolean = false,
+    historyViewModel: FocusSessionHistoryViewModel = viewModel(
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
+    )
 ) {
-    val summary by stateManager.weeklyStatsFlow.collectAsState()
+    val summary by historyViewModel.weeklyShieldSummaryFlow.collectAsStateWithLifecycle()
     var selectedMetricFilter by remember { mutableStateOf(ChartMetricFilter.ALL) }
     var selectedDayIndex by remember {
         mutableIntStateOf((summary.days.size - 1).coerceAtLeast(0))
@@ -671,8 +675,8 @@ private fun RechartsDualBarChart(
                 days.forEachIndexed { index, day ->
                     val isSelected = (index == selectedDayIndex)
 
-                    val notifRatio = (day.silencedNotifications.toFloat() / maxVal).coerceIn(0.05f, 1.0f)
-                    val callsRatio = (day.declinedCalls.toFloat() / maxVal).coerceIn(0.05f, 1.0f)
+                    val notifRatio = if (day.silencedNotifications <= 0) 0.015f else (day.silencedNotifications.toFloat() / maxVal).coerceIn(0.05f, 1.0f)
+                    val callsRatio = if (day.declinedCalls <= 0) 0.015f else (day.declinedCalls.toFloat() / maxVal).coerceIn(0.05f, 1.0f)
 
                     val animatedNotifHeight by animateFloatAsState(
                         targetValue = if (filter == ChartMetricFilter.CALLS) 0f else notifRatio,
@@ -916,7 +920,8 @@ private fun DailyBreakdownRow(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val progress = ((day.silencedNotifications + day.declinedCalls).toFloat() / maxTotal).coerceIn(0.05f, 1f)
+    val total = day.silencedNotifications + day.declinedCalls
+    val progress = if (total <= 0) 0f else (total.toFloat() / maxTotal).coerceIn(0.04f, 1f)
     val rowCorner by animateDpAsState(
         targetValue = if (isSelected) 20.dp else 14.dp,
         animationSpec = ExpressiveMotion.bouncySpatialSpring(),

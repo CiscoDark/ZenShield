@@ -7,6 +7,7 @@
 
 pub mod call_bouncer;
 pub mod focus_fsm;
+pub mod jni_bridge;
 pub mod notif_classifier;
 
 #[cfg(test)]

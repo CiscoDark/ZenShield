@@ -151,6 +151,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.core.DurationOption
 import com.example.core.FocusProfile
 import com.example.core.FocusSessionState
@@ -160,10 +162,12 @@ import com.example.core.InterceptType
 import com.example.services.GameDetectorService
 import com.example.ui.AppWhitelistBottomSheet
 import com.example.ui.AutoReplyCustomMessageBottomSheet
+import com.example.ui.CallBouncerEngineCard
 import com.example.ui.CinemaModeDashboardCard
 import com.example.ui.CinemaModeScreen
 import com.example.ui.FocusSessionHistoryDashboardCard
 import com.example.ui.FocusSessionHistoryScreen
+import com.example.ui.FocusSessionHistoryViewModel
 import com.example.ui.GameDetectionCard
 import com.example.ui.GamingModeNonInteractiveOverlay
 import com.example.ui.GamingModePopupManager
@@ -265,7 +269,10 @@ fun ZenShieldDashboardScreen(
 ) {
     val state by stateManager.state.collectAsState()
     val activeProfile by stateManager.activeProfileFlow.collectAsState()
-    val weeklySummary by stateManager.weeklyStatsFlow.collectAsState()
+    val historyViewModel: FocusSessionHistoryViewModel = viewModel(
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
+    )
+    val weeklySummary by historyViewModel.weeklyShieldSummaryFlow.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -578,6 +585,7 @@ fun ZenShieldDashboardScreen(
                         AnalyticsTelemetryTab(
                             state = state,
                             stateManager = stateManager,
+                            historyViewModel = historyViewModel,
                             onOpenFullSessionHistory = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 showSessionHistoryFullScreen = true
@@ -683,6 +691,7 @@ fun ZenShieldDashboardScreen(
         ) {
             FocusSessionHistoryScreen(
                 stateManager = stateManager,
+                historyViewModel = historyViewModel,
                 onBack = { showSessionHistoryFullScreen = false }
             )
         }
@@ -1196,6 +1205,15 @@ private fun ShieldCommandCenterTab(
             QuickRulesBentoGrid(
                 state = state,
                 stateManager = stateManager
+            )
+        }
+
+        // 3a-bouncer. Call Bouncer Engine & Repeat-Caller Cooldown Slider Card
+        item(key = "shield_call_bouncer_engine_section") {
+            CallBouncerEngineCard(
+                state = state,
+                stateManager = stateManager,
+                initiallyExpandedSubGuards = false
             )
         }
 
@@ -2166,6 +2184,9 @@ private fun QuickStatPill(
 private fun AnalyticsTelemetryTab(
     state: FocusSessionState,
     stateManager: FocusStateManager,
+    historyViewModel: FocusSessionHistoryViewModel = viewModel(
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
+    ),
     onOpenFullSessionHistory: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -2175,10 +2196,11 @@ private fun AnalyticsTelemetryTab(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 0a. Focus Session History (Room Database + Recharts-inspired Bar Chart)
+        // 0a. Focus Session History (Room Database + Recharts-inspired Bar & Line Chart)
         item(key = "analytics_focus_session_history") {
             FocusSessionHistoryDashboardCard(
                 stateManager = stateManager,
+                historyViewModel = historyViewModel,
                 onOpenFullScreen = onOpenFullSessionHistory
             )
         }
@@ -2186,13 +2208,17 @@ private fun AnalyticsTelemetryTab(
         // 0b. Gaming Mode Time Comparison Dashboard (This Week vs Last Week)
         item(key = "analytics_gaming_weekly_comparison") {
             GamingModeWeeklyComparisonCard(
-                stateManager = stateManager
+                stateManager = stateManager,
+                historyViewModel = historyViewModel
             )
         }
 
         // 1. Primary Recharts-Style Weekly Telemetry Card
         item {
-            WeeklyShieldStatsCard(stateManager = stateManager)
+            WeeklyShieldStatsCard(
+                stateManager = stateManager,
+                historyViewModel = historyViewModel
+            )
         }
 
         // 2. Live Intercepts Activity Feed
@@ -2338,77 +2364,13 @@ private fun RulesAndBouncerTab(
             )
         }
 
-        // 3. Active Call & VoIP Bouncer
+        // 3. Call Bouncer Engine & Repeat-Caller Cooldown Slider Card
         item(key = "rules_call_bouncer") {
-            val activeCallGuards = listOf(
-                state.networkLevelCallRejection,
-                state.autoDeclineVoipCalls,
-                state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
-                state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
-                state.declineAllCallsRegardless
-            ).count { it }
-            ExpandableConfigCard(
-                title = "Active Call & VoIP Bouncer",
-                subtitle = "Network-level rejection & 3-minute repeat breakthrough",
-                icon = Icons.Rounded.Phone,
-                initiallyExpanded = true,
-                badgeText = if (state.declineAllCallsRegardless) "ALL BLOCKED" else "$activeCallGuards ACTIVE"
-            ) {
-                ConfigSwitchRow(
-                    title = "Decline All Calls Regardless of Condition",
-                    subtitle = "Zero-tolerance lockdown: automatically drops all incoming cellular and VoIP calls, ignoring starred contacts and repeat callers",
-                    checked = state.declineAllCallsRegardless,
-                    onCheckedChange = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        stateManager.setDeclineAllCallsRegardless(it)
-                    },
-                    testTag = "switch_decline_all_calls_regardless"
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                ConfigSwitchRow(
-                    title = "Network-Level Call Rejection (Instant User Busy)",
-                    subtitle = "Sends immediate busy signal to tower without ringing",
-                    checked = state.networkLevelCallRejection,
-                    onCheckedChange = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        stateManager.setNetworkLevelCallRejectionEnabled(it)
-                    },
-                    testTag = "switch_network_rejection"
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                ConfigSwitchRow(
-                    title = "Auto-Decline WhatsApp/Telegram Calls",
-                    subtitle = "Hangs up third-party VoIP calls via programmatic action intent",
-                    checked = state.autoDeclineVoipCalls,
-                    onCheckedChange = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        stateManager.setAutoDeclineVoipCallsEnabled(it)
-                    },
-                    testTag = "switch_voip_bouncer"
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                ConfigSwitchRow(
-                    title = "3-Minute Repeat Caller Breakthrough",
-                    subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Second call within 180s rings out loud for real emergencies",
-                    checked = state.allowRepeatCallersEnabled && !state.declineAllCallsRegardless,
-                    onCheckedChange = {
-                        ExpressiveHaptics.playSpringTap(context)
-                        stateManager.setAllowRepeatCallersEnabled(it)
-                    },
-                    testTag = "switch_repeat_breakthrough"
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                ConfigSwitchRow(
-                    title = "Allow Starred Contacts",
-                    subtitle = if (state.declineAllCallsRegardless) "Overridden: Decline All Calls is active" else "Passes priority contacts through cellular & VoIP filters",
-                    checked = state.allowStarredContactsOnly && !state.declineAllCallsRegardless,
-                    onCheckedChange = { checked ->
-                        ExpressiveHaptics.playSpringTap(context)
-                        stateManager.updateProfileSettings(checked, state.blockRepeatedCallers, state.silenceNotifications)
-                    },
-                    testTag = "switch_allow_starred"
-                )
-            }
+            CallBouncerEngineCard(
+                state = state,
+                stateManager = stateManager,
+                initiallyExpandedSubGuards = true
+            )
         }
 
         // 4. Gaming Mode Lockdown (Collapsible Detail Card)

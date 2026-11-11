@@ -474,6 +474,8 @@ object SentinalRustCoreBridge {
     }
 
     data class RustCallPolicyConfig(
+        val callBouncerEnabled: Boolean = true,
+        val repeatCallerWindowMs: Long = REPEAT_CALLER_WINDOW_MS,
         val declineAllCallsRegardless: Boolean = false,
         val strictGamingLockdown: Boolean = true,
         val isGamingModeActive: Boolean = false,
@@ -513,6 +515,19 @@ object SentinalRustCoreBridge {
         val startNs = System.nanoTime()
         val key = normalizeCallerLookupKey(rawCaller)
 
+        if (!policy.callBouncerEnabled && !policy.declineAllCallsRegardless) {
+            val elapsedMicros = ((System.nanoTime() - startNs) / 1_000L).coerceAtLeast(1L)
+            return RustCallBounceDecision(
+                normalizedCallerKey = key,
+                filterAction = RustCallFilterAction.ALLOW_RING_BREAKTHROUGH,
+                dispatchAutoReply = false,
+                updatedLastCallTimestampMs = lastIncomingCallMs,
+                updatedLastAutoReplyTimestampMs = lastAutoReplyToCallerMs,
+                reason = "Call Bouncer engine disabled — incoming call allowed through",
+                executionMicros = elapsedMicros
+            )
+        }
+
         if (policy.declineAllCallsRegardless) {
             val sendReply = shouldDispatchAutoReply(
                 normalizedKey = key,
@@ -547,18 +562,20 @@ object SentinalRustCoreBridge {
             )
         }
 
+        val effectiveRepeatWindowMs = policy.repeatCallerWindowMs.coerceIn(30_000L, 900_000L)
         if (policy.allowRepeatCallersWithin3m && key.isNotEmpty() && key != "unknown") {
             if (lastIncomingCallMs != null && lastIncomingCallMs > 0L &&
-                (nowMs - lastIncomingCallMs) <= REPEAT_CALLER_WINDOW_MS
+                (nowMs - lastIncomingCallMs) <= effectiveRepeatWindowMs
             ) {
                 val elapsedMicros = ((System.nanoTime() - startNs) / 1_000L).coerceAtLeast(1L)
+                val windowSec = effectiveRepeatWindowMs / 1_000L
                 return RustCallBounceDecision(
                     normalizedCallerKey = key,
                     filterAction = RustCallFilterAction.ALLOW_RING_BREAKTHROUGH,
                     dispatchAutoReply = false,
                     updatedLastCallTimestampMs = null,
                     updatedLastAutoReplyTimestampMs = lastAutoReplyToCallerMs,
-                    reason = "Second call within 180s repeat-caller emergency window",
+                    reason = "Second call within ${windowSec}s repeat-caller emergency window",
                     executionMicros = elapsedMicros
                 )
             }
@@ -572,6 +589,7 @@ object SentinalRustCoreBridge {
             autoReplyEnabled = policy.autoReplyEnabled
         )
         val elapsedMicros = ((System.nanoTime() - startNs) / 1_000L).coerceAtLeast(1L)
+        val windowMins = (effectiveRepeatWindowMs / 60_000L).coerceAtLeast(1L)
 
         return RustCallBounceDecision(
             normalizedCallerKey = key,
@@ -580,7 +598,7 @@ object SentinalRustCoreBridge {
             updatedLastCallTimestampMs = nowMs,
             updatedLastAutoReplyTimestampMs = if (sendReply) nowMs else lastAutoReplyToCallerMs,
             reason = if (sendReply) {
-                "Call bounced • Auto-reply dispatched (3m cooldown started)"
+                "Call bounced • Auto-reply dispatched (${windowMins}m cooldown started)"
             } else {
                 "Call bounced silently (auto-reply suppressed by cooldown or outgoing guard)"
             },

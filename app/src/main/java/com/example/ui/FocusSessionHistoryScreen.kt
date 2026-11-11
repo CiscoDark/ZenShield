@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.ShowChart
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Card
@@ -70,7 +71,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -135,7 +139,7 @@ fun FocusSessionHistoryScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     historyViewModel: FocusSessionHistoryViewModel = viewModel(
-        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository)
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
     )
 ) {
     val context = LocalContext.current
@@ -180,21 +184,7 @@ fun FocusSessionHistoryScreen(
                         )
                     }
                 },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            ExpressiveHaptics.playSpringTap(context)
-                            historyViewModel.restoreDemoHistory()
-                        },
-                        modifier = Modifier.testTag("session_history_restore_seed_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Restore Sample History",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
+                actions = {},
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
@@ -270,12 +260,7 @@ fun FocusSessionHistoryScreen(
             // 3. Room Session Log Items
             if (uiState.filteredSessions.isEmpty()) {
                 item(key = "history_empty_state") {
-                    EmptySessionHistoryCard(
-                        onRestoreSample = {
-                            ExpressiveHaptics.playSpringTap(context)
-                            historyViewModel.restoreDemoHistory()
-                        }
-                    )
+                    EmptySessionHistoryCard()
                 }
             } else {
                 items(
@@ -304,7 +289,7 @@ fun FocusSessionHistoryDashboardCard(
     stateManager: FocusStateManager,
     modifier: Modifier = Modifier,
     historyViewModel: FocusSessionHistoryViewModel = viewModel(
-        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository)
+        factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
     ),
     onOpenFullScreen: (() -> Unit)? = null
 ) {
@@ -495,10 +480,38 @@ fun FocusSessionHistoryDashboardCard(
                         ),
                         modifier = Modifier.testTag("history_chart_view_daily")
                     )
+
+                    FilterChip(
+                        selected = uiState.showTrendLineOverlay,
+                        onClick = {
+                            ExpressiveHaptics.playSpringTap(context)
+                            historyViewModel.toggleTrendLineOverlay()
+                        },
+                        label = {
+                            Text(
+                                text = "Line",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.ShowChart,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        ),
+                        modifier = Modifier.testTag("history_chart_toggle_trend_line")
+                    )
                 }
             }
 
-            // 4. Recharts-Inspired Bar Chart Canvas Container
+            // 4. Recharts-Inspired Bar & Line Chart Canvas Container
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -520,6 +533,7 @@ fun FocusSessionHistoryDashboardCard(
                         RechartsModeAllocationBarChart(
                             allocations = uiState.modeAllocations,
                             selectedBarIndex = uiState.selectedBarIndex,
+                            showTrendLine = uiState.showTrendLineOverlay,
                             onSelectBar = { idx ->
                                 ExpressiveHaptics.playSpringTap(context)
                                 historyViewModel.selectBarIndex(idx)
@@ -529,6 +543,7 @@ fun FocusSessionHistoryDashboardCard(
                         RechartsDailyStackedModeBarChart(
                             days = uiState.dailyBreakdown,
                             selectedDayIndex = uiState.selectedBarIndex,
+                            showTrendLine = uiState.showTrendLineOverlay,
                             onSelectDay = { idx ->
                                 ExpressiveHaptics.playSpringTap(context)
                                 historyViewModel.selectBarIndex(idx)
@@ -551,62 +566,19 @@ fun FocusSessionHistoryDashboardCard(
                 }
             }
 
-            // 6. Quick Session Logger Strip (Writes directly to Room Database)
+            // 6. Live User Telemetry Status Strip
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = "Quick Log Completed Session to Room DB",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
+                    text = "Live Room Telemetry • Logged automatically from your Focus Mode sessions",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FocusSessionHistoryRepository.TRACKED_MODES.forEach { profile ->
-                        val defaultMins = when (profile) {
-                            FocusProfile.GAMING -> 45
-                            FocusProfile.WORK -> 60
-                            FocusProfile.SLEEP -> 90
-                            FocusProfile.DO_NOT_DISTURB -> 30
-                            FocusProfile.CINEMA -> 120
-                            FocusProfile.OFF -> 30
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                ExpressiveHaptics.playSpringTap(context)
-                                historyViewModel.logQuickSession(
-                                    profile = profile,
-                                    durationMinutes = defaultMins,
-                                    triggerSource = "Quick Log"
-                                )
-                            },
-                            shape = CircleShape,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("quick_log_session_${profile.id.lowercase()}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Add,
-                                contentDescription = null,
-                                tint = focusModeBarColor(profile),
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "+${defaultMins}m ${focusModeShortLabel(profile)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
             }
 
             // 7. Compact Recent Sessions Preview when embedded in Dashboard/Analytics
@@ -655,6 +627,7 @@ fun FocusSessionHistoryDashboardCard(
 private fun RechartsModeAllocationBarChart(
     allocations: List<ModeTimeAllocation>,
     selectedBarIndex: Int,
+    showTrendLine: Boolean = true,
     onSelectBar: (Int) -> Unit
 ) {
     val maxMinutesRaw = remember(allocations) {
@@ -666,7 +639,7 @@ private fun RechartsModeAllocationBarChart(
 
     val barFractions = allocations.mapIndexed { idx, item ->
         val frac by animateFloatAsState(
-            targetValue = (item.totalMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.03f, 1f),
+            targetValue = if (item.totalMinutes <= 0) 0f else (item.totalMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.04f, 1f),
             animationSpec = ExpressiveMotion.bouncySpatialSpring(),
             label = "mode_bar_frac_$idx"
         )
@@ -675,6 +648,7 @@ private fun RechartsModeAllocationBarChart(
 
     val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
     val highlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+    val trendLineColor = MaterialTheme.colorScheme.primary
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
@@ -753,23 +727,63 @@ private fun RechartsModeAllocationBarChart(
                     val barColor = focusModeBarColor(item.profile)
                     val isSelected = i == selectedBarIndex
                     val barWidth = (slotWidth * 0.52f).coerceAtMost(34.dp.toPx())
-                    val barHeight = (barFractions[i] * (height - 10.dp.toPx())).coerceAtLeast(6.dp.toPx())
                     val left = (i + 0.5f) * slotWidth - barWidth / 2f
-                    val top = height - barHeight
+                    if (item.totalMinutes <= 0) {
+                        drawRoundRect(
+                            color = gridColor,
+                            topLeft = Offset(left, height - 3.dp.toPx()),
+                            size = Size(barWidth, 3.dp.toPx()),
+                            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+                        )
+                    } else {
+                        val barHeight = (barFractions[i] * (height - 10.dp.toPx())).coerceAtLeast(6.dp.toPx())
+                        val top = height - barHeight
 
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                barColor.copy(alpha = if (isSelected) 1f else 0.85f),
-                                barColor.copy(alpha = if (isSelected) 0.65f else 0.42f)
+                        drawRoundRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    barColor.copy(alpha = if (isSelected) 1f else 0.85f),
+                                    barColor.copy(alpha = if (isSelected) 0.65f else 0.42f)
+                                ),
+                                startY = top,
+                                endY = height
                             ),
-                            startY = top,
-                            endY = height
-                        ),
-                        topLeft = Offset(left, top),
-                        size = Size(barWidth, barHeight),
-                        cornerRadius = CornerRadius(9.dp.toPx(), 9.dp.toPx())
+                            topLeft = Offset(left, top),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = CornerRadius(9.dp.toPx(), 9.dp.toPx())
+                        )
+                    }
+                }
+
+                // Smooth Cubic Bezier Trend Line & Data Nodes over Mode Bars
+                if (showTrendLine && allocations.size >= 2) {
+                    val points = allocations.indices.map { i ->
+                        val x = (i + 0.5f) * slotWidth
+                        val y = height - (barFractions[i] * (height - 12.dp.toPx())).coerceAtLeast(3.dp.toPx())
+                        Offset(x, y)
+                    }
+                    val linePath = Path().apply {
+                        moveTo(points.first().x, points.first().y)
+                        for (i in 0 until points.size - 1) {
+                            val p0 = points[i]
+                            val p1 = points[i + 1]
+                            val ctrlX = (p0.x + p1.x) / 2f
+                            cubicTo(ctrlX, p0.y, ctrlX, p1.y, p1.x, p1.y)
+                        }
+                    }
+                    drawPath(
+                        path = linePath,
+                        color = trendLineColor.copy(alpha = 0.72f),
+                        style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
                     )
+                    points.forEachIndexed { idx, pt ->
+                        val isSel = idx == selectedBarIndex
+                        drawCircle(
+                            color = focusModeBarColor(allocations[idx].profile),
+                            radius = if (isSel) 5.5.dp.toPx() else 3.8.dp.toPx(),
+                            center = pt
+                        )
+                    }
                 }
             }
         }
@@ -836,6 +850,7 @@ private fun RechartsModeAllocationBarChart(
 private fun RechartsDailyStackedModeBarChart(
     days: List<DailyFocusModeBarEntry>,
     selectedDayIndex: Int,
+    showTrendLine: Boolean = true,
     onSelectDay: (Int) -> Unit
 ) {
     val maxDayMinutes = remember(days) {
@@ -847,7 +862,7 @@ private fun RechartsDailyStackedModeBarChart(
 
     val totalFractions = days.mapIndexed { idx, day ->
         val frac by animateFloatAsState(
-            targetValue = (day.totalMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.02f, 1f),
+            targetValue = if (day.totalMinutes <= 0) 0f else (day.totalMinutes.toFloat() / maxAxisMinutes.toFloat()).coerceIn(0.03f, 1f),
             animationSpec = ExpressiveMotion.bouncySpatialSpring(),
             label = "daily_stacked_frac_$idx"
         )
@@ -856,6 +871,7 @@ private fun RechartsDailyStackedModeBarChart(
 
     val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
     val highlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+    val trendLineColor = MaterialTheme.colorScheme.primary
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Legend Row
@@ -983,6 +999,54 @@ private fun RechartsDailyStackedModeBarChart(
                                 currentBottom = top
                             }
                         }
+                    }
+                }
+
+                // Smooth Cubic Bezier Trend Line & Area Spline over 7-Day Stacked Bars
+                if (showTrendLine && days.size >= 2) {
+                    val points = days.indices.map { i ->
+                        val x = (i + 0.5f) * slotWidth
+                        val y = height - (totalFractions[i] * (height - 10.dp.toPx())).coerceAtLeast(4.dp.toPx())
+                        Offset(x, y)
+                    }
+                    val linePath = Path().apply {
+                        moveTo(points.first().x, points.first().y)
+                        for (i in 0 until points.size - 1) {
+                            val p0 = points[i]
+                            val p1 = points[i + 1]
+                            val ctrlX = (p0.x + p1.x) / 2f
+                            cubicTo(ctrlX, p0.y, ctrlX, p1.y, p1.x, p1.y)
+                        }
+                    }
+                    val areaPath = Path().apply {
+                        addPath(linePath)
+                        lineTo(points.last().x, height)
+                        lineTo(points.first().x, height)
+                        close()
+                    }
+                    drawPath(
+                        path = areaPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                trendLineColor.copy(alpha = 0.16f),
+                                Color.Transparent
+                            ),
+                            startY = 0f,
+                            endY = height
+                        )
+                    )
+                    drawPath(
+                        path = linePath,
+                        color = trendLineColor.copy(alpha = 0.85f),
+                        style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                    points.forEachIndexed { idx, pt ->
+                        val isSel = idx == selectedDayIndex
+                        drawCircle(
+                            color = trendLineColor,
+                            radius = if (isSel) 5.5.dp.toPx() else 3.8.dp.toPx(),
+                            center = pt
+                        )
                     }
                 }
             }
@@ -1346,9 +1410,7 @@ private fun FocusSessionHistoryItemCard(
 }
 
 @Composable
-private fun EmptySessionHistoryCard(
-    onRestoreSample: () -> Unit
-) {
+private fun EmptySessionHistoryCard() {
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1368,29 +1430,17 @@ private fun EmptySessionHistoryCard(
                 modifier = Modifier.size(36.dp)
             )
             Text(
-                text = "No Focus Sessions in Filter",
+                text = "No User Focus Sessions Recorded Yet",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "Use the Quick Log buttons above or toggle any Focus Mode to record sessions in Room.",
+                text = "Activate any Focus Mode (Gaming, Work, Sleep, DND, or Cinema) from the dashboard or Quick Settings tile to log your live and completed sessions in Room.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            FilledTonalButton(
-                onClick = onRestoreSample,
-                shape = CircleShape
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Restore Sample History")
-            }
         }
     }
 }

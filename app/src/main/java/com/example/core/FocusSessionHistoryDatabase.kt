@@ -75,7 +75,7 @@ abstract class FocusHistoryDatabase : RoomDatabase() {
     abstract fun focusSessionHistoryDao(): FocusSessionHistoryDao
 
     companion object {
-        private const val DATABASE_NAME = "sentinal_focus_session_history.db"
+        private const val DATABASE_NAME = "sentinal_user_focus_sessions_v2.db"
 
         @Volatile
         private var INSTANCE: FocusHistoryDatabase? = null
@@ -328,5 +328,175 @@ class FocusSessionHistoryRepository(
                 )
             }
         }
+
+        /**
+         * Aggregates Room [FocusSessionHistoryEntity] entries for [FocusProfile.GAMING] across
+         * This Week (0..6 days ago) and Last Week (7..13 days ago), merging any additional
+         * per-day minutes so both Grouped Bar and Area Spline Line charts re-render reactively
+         * whenever new focus data is inserted into Room.
+         */
+        fun aggregateGamingWeeklyComparison(
+            sessions: List<FocusSessionHistoryEntity>,
+            nowMillis: Long = System.currentTimeMillis(),
+            extraMinutesByDateKey: Map<String, Int> = emptyMap()
+        ): GamingWeeklyComparisonSummary {
+            val dayFormat = SimpleDateFormat("EEE", Locale.US)
+            val fullFormat = SimpleDateFormat("EEE, MMM d", Locale.US)
+            val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val todayKey = keyFormat.format(Date(nowMillis))
+
+            val gamingMinutesByDayKey = sessions
+                .filter { FocusProfile.fromId(it.profileId) == FocusProfile.GAMING }
+                .groupBy { keyFormat.format(Date(it.endTimeMillis)) }
+                .mapValues { (_, list) -> list.sumOf { it.durationMinutes } }
+
+            val comparisonDays = mutableListOf<DailyGamingComparison>()
+            var sumThisWeek = 0
+            var sumLastWeek = 0
+            var peakDayLabel = "None"
+            var peakDayMins = 0
+
+            for (i in 6 downTo 0) {
+                val idx = 6 - i
+                val thisWeekCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    add(Calendar.DAY_OF_YEAR, -i)
+                }
+                val lastWeekCal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    add(Calendar.DAY_OF_YEAR, -(i + 7))
+                }
+
+                val keyThis = keyFormat.format(thisWeekCal.time)
+                val keyLast = keyFormat.format(lastWeekCal.time)
+                val isToday = (keyThis == todayKey)
+
+                val roomThis = gamingMinutesByDayKey[keyThis] ?: 0
+                val extraThis = extraMinutesByDateKey[keyThis] ?: 0
+                val minsThis = maxOf(roomThis, extraThis)
+
+                val roomLast = gamingMinutesByDayKey[keyLast] ?: 0
+                val extraLast = extraMinutesByDateKey[keyLast] ?: 0
+                val minsLast = maxOf(roomLast, extraLast)
+
+                val dayShort = dayFormat.format(thisWeekCal.time)
+                val dayFullThis = fullFormat.format(thisWeekCal.time)
+                val dayFullLast = fullFormat.format(lastWeekCal.time)
+
+                comparisonDays.add(
+                    DailyGamingComparison(
+                        dayIndex = idx,
+                        dayKeyThisWeek = keyThis,
+                        dayKeyLastWeek = keyLast,
+                        dayShort = dayShort,
+                        dayFullThisWeek = dayFullThis,
+                        dayFullLastWeek = dayFullLast,
+                        isToday = isToday,
+                        thisWeekMinutes = minsThis,
+                        lastWeekMinutes = minsLast
+                    )
+                )
+
+                sumThisWeek += minsThis
+                sumLastWeek += minsLast
+                if (minsThis > peakDayMins) {
+                    peakDayMins = minsThis
+                    peakDayLabel = dayShort
+                }
+            }
+
+            val deltaMins = sumThisWeek - sumLastWeek
+            val deltaPct = if (sumLastWeek > 0) {
+                (deltaMins.toFloat() / sumLastWeek.toFloat()) * 100f
+            } else if (sumThisWeek > 0) {
+                100f
+            } else {
+                0f
+            }
+
+            return GamingWeeklyComparisonSummary(
+                days = comparisonDays,
+                thisWeekTotalMinutes = sumThisWeek,
+                lastWeekTotalMinutes = sumLastWeek,
+                deltaMinutes = deltaMins,
+                deltaPercentage = deltaPct,
+                peakDayThisWeekLabel = peakDayLabel,
+                peakDayThisWeekMinutes = peakDayMins.coerceAtLeast(0),
+                averageDailyMinutesThisWeek = sumThisWeek / 7f
+            )
+        }
+
+        /**
+         * Aggregates Room [FocusSessionHistoryEntity] silenced alerts and declined calls across
+         * the last 7 days, merging any standalone daily counters so the Weekly Shield Dual-Bar
+         * and Smooth Area Trend Line chart re-renders whenever new focus data is inserted into Room.
+         */
+        fun aggregateWeeklyShieldSummary(
+            sessions: List<FocusSessionHistoryEntity>,
+            nowMillis: Long = System.currentTimeMillis(),
+            extraNotifsByDateKey: Map<String, Int> = emptyMap(),
+            extraCallsByDateKey: Map<String, Int> = emptyMap()
+        ): WeeklyShieldSummary {
+            val dayFormat = SimpleDateFormat("EEE", Locale.US)
+            val fullFormat = SimpleDateFormat("EEEE, MMM d", Locale.US)
+            val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val todayKey = keyFormat.format(Date(nowMillis))
+
+            val sessionsByDayKey = sessions.groupBy { keyFormat.format(Date(it.endTimeMillis)) }
+
+            val daysList = mutableListOf<DailyShieldStats>()
+            var sumNotifs = 0
+            var sumCalls = 0
+            var maxTotal = 0
+            var peakDay = "None"
+
+            for (i in 6 downTo 0) {
+                val cal = Calendar.getInstance().apply {
+                    timeInMillis = nowMillis
+                    add(Calendar.DAY_OF_YEAR, -i)
+                }
+                val key = keyFormat.format(cal.time)
+                val isToday = (key == todayKey)
+
+                val daySessions = sessionsByDayKey[key].orEmpty()
+                val roomNotifs = daySessions.sumOf { it.alertsSilenced }
+                val roomCalls = daySessions.sumOf { it.callsDeclined }
+
+                val notifs = roomNotifs + (extraNotifsByDateKey[key] ?: 0)
+                val calls = roomCalls + (extraCallsByDateKey[key] ?: 0)
+
+                val dayShort = dayFormat.format(cal.time)
+                val dayFull = fullFormat.format(cal.time)
+
+                daysList.add(
+                    DailyShieldStats(
+                        dayKey = key,
+                        dayShort = dayShort,
+                        dayFull = dayFull,
+                        isToday = isToday,
+                        silencedNotifications = notifs,
+                        declinedCalls = calls
+                    )
+                )
+
+                sumNotifs += notifs
+                sumCalls += calls
+                val total = notifs + calls
+                if (total > maxTotal) {
+                    maxTotal = total
+                    peakDay = dayShort
+                }
+            }
+
+            return WeeklyShieldSummary(
+                days = daysList,
+                totalSilencedNotifications = sumNotifs,
+                totalDeclinedCalls = sumCalls,
+                peakDayLabel = peakDay,
+                averageSilencedPerDay = sumNotifs / 7f,
+                averageCallsPerDay = sumCalls / 7f
+            )
+        }
     }
 }
+
