@@ -64,15 +64,111 @@ interface FocusSessionHistoryDao {
 }
 
 /**
- * Room Database holder for Sentinal Focus Session History.
+ * Room Entity storing each notification silenced/hidden or call bounced while Sentinal Focus is active.
+ */
+@Entity(tableName = "missed_notification_log")
+data class MissedNotificationEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+    val timestampMillis: Long = System.currentTimeMillis(),
+    val sessionStartTimeMillis: Long = 0L,
+    val focusProfileId: String,
+    val focusProfileDisplayName: String,
+    val appName: String,
+    val packageName: String,
+    val senderOrTitle: String,
+    val messagePreview: String,
+    val categoryName: String = NotificationCategory.DIRECT_MESSAGES.name,
+    val priorityLevelName: String = NotificationPriorityLevel.HIGH.name,
+    val appliedActionName: String = GlobalFocusRuleAction.MUTE_SILENT.name,
+    val isCallBounce: Boolean = false,
+    val isReviewed: Boolean = false
+)
+
+/**
+ * Room Entity storing generated AI Notification Executive Digests.
+ */
+@Entity(tableName = "ai_notification_digests")
+data class AiNotificationDigestEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+    val generatedAtMillis: Long = System.currentTimeMillis(),
+    val scopeLabel: String,
+    val focusProfileDisplayName: String,
+    val totalNotificationsAnalyzed: Int,
+    val totalCallsAnalyzed: Int,
+    val headline: String,
+    val urgentActionItemsJson: String,
+    val senderGroupsJson: String,
+    val focusTip: String
+)
+
+/**
+ * Room DAO for reactive observation and CRUD operations on the Missed Notification Log and AI Digests.
+ */
+@Dao
+interface MissedNotificationDao {
+    @Query("SELECT * FROM missed_notification_log ORDER BY timestampMillis DESC")
+    fun getAllMissedNotificationsFlow(): Flow<List<MissedNotificationEntity>>
+
+    @Query("SELECT * FROM missed_notification_log WHERE isReviewed = 0 ORDER BY timestampMillis DESC")
+    fun getUnreadMissedNotificationsFlow(): Flow<List<MissedNotificationEntity>>
+
+    @Query("SELECT * FROM missed_notification_log WHERE timestampMillis >= :sinceMillis ORDER BY timestampMillis DESC")
+    suspend fun getMissedNotificationsSince(sinceMillis: Long): List<MissedNotificationEntity>
+
+    @Query("SELECT * FROM missed_notification_log ORDER BY timestampMillis DESC")
+    suspend fun getAllMissedNotificationsSnapshot(): List<MissedNotificationEntity>
+
+    @Query("SELECT COUNT(*) FROM missed_notification_log")
+    suspend fun getMissedNotificationCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMissedNotification(entity: MissedNotificationEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMissedNotifications(entities: List<MissedNotificationEntity>)
+
+    @Query("UPDATE missed_notification_log SET isReviewed = :reviewed WHERE id = :id")
+    suspend fun setReviewedStatus(id: Long, reviewed: Boolean = true)
+
+    @Query("UPDATE missed_notification_log SET isReviewed = 1")
+    suspend fun markAllAsReviewed()
+
+    @Query("DELETE FROM missed_notification_log WHERE id = :id")
+    suspend fun deleteMissedNotificationById(id: Long)
+
+    @Query("DELETE FROM missed_notification_log")
+    suspend fun clearAllMissedNotifications()
+
+    @Query("SELECT * FROM ai_notification_digests ORDER BY generatedAtMillis DESC LIMIT 1")
+    fun getLatestDigestFlow(): Flow<AiNotificationDigestEntity?>
+
+    @Query("SELECT * FROM ai_notification_digests ORDER BY generatedAtMillis DESC")
+    fun getAllDigestsFlow(): Flow<List<AiNotificationDigestEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDigest(digest: AiNotificationDigestEntity): Long
+
+    @Query("DELETE FROM ai_notification_digests")
+    suspend fun clearAllDigests()
+}
+
+/**
+ * Room Database holder for Sentinal Focus Session History, Missed Notification Log, and AI Digests.
  */
 @Database(
-    entities = [FocusSessionHistoryEntity::class],
-    version = 1,
+    entities = [
+        FocusSessionHistoryEntity::class,
+        MissedNotificationEntity::class,
+        AiNotificationDigestEntity::class
+    ],
+    version = 2,
     exportSchema = false
 )
 abstract class FocusHistoryDatabase : RoomDatabase() {
     abstract fun focusSessionHistoryDao(): FocusSessionHistoryDao
+    abstract fun missedNotificationDao(): MissedNotificationDao
 
     companion object {
         private const val DATABASE_NAME = "sentinal_user_focus_sessions_v2.db"

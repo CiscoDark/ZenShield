@@ -1122,6 +1122,24 @@ class ExampleRobolectricTest {
             com.example.core.NotificationPriorityLevel.HIGH
         )
     }
+
+    @Test
+    fun `manifest declares internet and network state permissions for BYOK Gemini API`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val packageInfo = context.packageManager.getPackageInfo(
+            context.packageName,
+            android.content.pm.PackageManager.GET_PERMISSIONS
+        )
+        val requestedPermissions = packageInfo.requestedPermissions?.toSet().orEmpty()
+        assertTrue(
+            "AndroidManifest.xml must declare android.permission.INTERNET",
+            requestedPermissions.contains(android.Manifest.permission.INTERNET)
+        )
+        assertTrue(
+            "AndroidManifest.xml must declare android.permission.ACCESS_NETWORK_STATE",
+            requestedPermissions.contains(android.Manifest.permission.ACCESS_NETWORK_STATE)
+        )
+    }
 }
 
 

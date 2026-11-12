@@ -427,6 +427,236 @@ class ExampleUnitTest {
         )
         assertTrue(secondCallAt6Min.reason.contains("600s"))
     }
+
+    @Test
+    fun aiNotificationDigest_andMissedNotificationLogRoomPersistenceAndFiltersAreValid() = kotlinx.coroutines.runBlocking {
+        val missedBackingFlow = kotlinx.coroutines.flow.MutableStateFlow<List<com.example.core.MissedNotificationEntity>>(emptyList())
+        val digestBackingFlow = kotlinx.coroutines.flow.MutableStateFlow<com.example.core.AiNotificationDigestEntity?>(null)
+
+        val fakeMissedDao = object : com.example.core.MissedNotificationDao {
+            private var nextId = 1L
+            private var nextDigestId = 1L
+
+            override fun getAllMissedNotificationsFlow(): kotlinx.coroutines.flow.Flow<List<com.example.core.MissedNotificationEntity>> =
+                missedBackingFlow
+
+            override fun getUnreadMissedNotificationsFlow(): kotlinx.coroutines.flow.Flow<List<com.example.core.MissedNotificationEntity>> =
+                missedBackingFlow
+
+            override suspend fun getMissedNotificationsSince(sinceMillis: Long): List<com.example.core.MissedNotificationEntity> =
+                missedBackingFlow.value.filter { it.timestampMillis >= sinceMillis }
+
+            override suspend fun getAllMissedNotificationsSnapshot(): List<com.example.core.MissedNotificationEntity> =
+                missedBackingFlow.value
+
+            override suspend fun getMissedNotificationCount(): Int =
+                missedBackingFlow.value.size
+
+            override suspend fun insertMissedNotification(entity: com.example.core.MissedNotificationEntity): Long {
+                val id = nextId++
+                missedBackingFlow.value = listOf(entity.copy(id = id)) + missedBackingFlow.value
+                return id
+            }
+
+            override suspend fun insertMissedNotifications(entities: List<com.example.core.MissedNotificationEntity>) {
+                missedBackingFlow.value = entities + missedBackingFlow.value
+            }
+
+            override suspend fun setReviewedStatus(id: Long, reviewed: Boolean) {
+                missedBackingFlow.value = missedBackingFlow.value.map {
+                    if (it.id == id) it.copy(isReviewed = reviewed) else it
+                }
+            }
+
+            override suspend fun markAllAsReviewed() {
+                missedBackingFlow.value = missedBackingFlow.value.map { it.copy(isReviewed = true) }
+            }
+
+            override suspend fun deleteMissedNotificationById(id: Long) {
+                missedBackingFlow.value = missedBackingFlow.value.filterNot { it.id == id }
+            }
+
+            override suspend fun clearAllMissedNotifications() {
+                missedBackingFlow.value = emptyList()
+            }
+
+            override fun getLatestDigestFlow(): kotlinx.coroutines.flow.Flow<com.example.core.AiNotificationDigestEntity?> =
+                digestBackingFlow
+
+            override fun getAllDigestsFlow(): kotlinx.coroutines.flow.Flow<List<com.example.core.AiNotificationDigestEntity>> =
+                kotlinx.coroutines.flow.MutableStateFlow(listOfNotNull(digestBackingFlow.value))
+
+            override suspend fun insertDigest(digest: com.example.core.AiNotificationDigestEntity): Long {
+                val id = nextDigestId++
+                digestBackingFlow.value = digest.copy(id = id)
+                return id
+            }
+
+            override suspend fun clearAllDigests() {
+                digestBackingFlow.value = null
+            }
+        }
+
+        val repo = com.example.core.AiNotificationDigestRepository(fakeMissedDao)
+        val now = 1_700_000_000_000L
+
+        repo.logMissedNotificationOrCall(
+            focusProfile = FocusProfile.WORK,
+            sessionStartTimeMillis = now - 120_000L,
+            appName = "Slack",
+            packageName = "com.slack",
+            senderOrTitle = "Priya Nair (#prod-release)",
+            messagePreview = "Please approve hotfix PR #482",
+            category = com.example.core.NotificationCategory.WORK_AND_CALENDAR,
+            priorityLevel = com.example.core.NotificationPriorityLevel.HIGH,
+            appliedAction = com.example.core.GlobalFocusRuleAction.MUTE_SILENT,
+            isCallBounce = false,
+            timestampMillis = now - 60_000L
+        )
+        repo.logMissedNotificationOrCall(
+            focusProfile = FocusProfile.GAMING,
+            sessionStartTimeMillis = now - 120_000L,
+            appName = "Call Bouncer",
+            packageName = "com.android.server.telecom",
+            senderOrTitle = "+1 (415) 891-4420",
+            messagePreview = "Bounced incoming call attempt",
+            category = com.example.core.NotificationCategory.SECURITY_AND_URGENT,
+            priorityLevel = com.example.core.NotificationPriorityLevel.HIGH,
+            appliedAction = com.example.core.GlobalFocusRuleAction.MUTE_SILENT,
+            isCallBounce = true,
+            timestampMillis = now - 30_000L
+        )
+
+        val allLogged = repo.getAllMissedNotificationsSnapshot()
+        assertEquals(2, allLogged.size)
+
+        // Verify filterMissedNotifications by Focus Mode, Priority Tier, App/Calls-Only, and Search Query
+        val workOnly = com.example.ui.filterMissedNotifications(
+            allLogged,
+            com.example.ui.MissedLogFilterState(selectedFocusProfile = FocusProfile.WORK)
+        )
+        assertEquals(1, workOnly.size)
+        assertEquals("Slack", workOnly.first().appName)
+
+        val callsOnly = com.example.ui.filterMissedNotifications(
+            allLogged,
+            com.example.ui.MissedLogFilterState(
+                selectedAppFilter = com.example.ui.MissedNotificationLogViewModel.APP_FILTER_CALLS_ONLY
+            )
+        )
+        assertEquals(1, callsOnly.size)
+        assertTrue(callsOnly.first().isCallBounce)
+
+        val searchMatch = com.example.ui.filterMissedNotifications(
+            allLogged,
+            com.example.ui.MissedLogFilterState(searchQuery = "hotfix")
+        )
+        assertEquals(1, searchMatch.size)
+        assertEquals("Priya Nair (#prod-release)", searchMatch.first().senderOrTitle)
+
+        // Verify structured JSON parsing & Room round-trip serialization for AiNotificationDigest
+        val rawGeminiJson = """
+            {
+              "headline": "2 high-priority items intercepted across Work and Gaming sessions.",
+              "urgentActionItems": [
+                "Approve hotfix PR #482 for Priya Nair in #prod-release",
+                "Return bounced call to +1 (415) 891-4420"
+              ],
+              "senderGroups": [
+                {
+                  "senderOrApp": "Slack • Priya Nair",
+                  "categoryLabel": "Work & Calendar",
+                  "count": 1,
+                  "summary": "Waiting on sign-off for hotfix PR #482."
+                },
+                {
+                  "senderOrApp": "Call Bouncer • +1 (415) 891-4420",
+                  "categoryLabel": "Call Bounced",
+                  "count": 1,
+                  "summary": "1 incoming call bounced during Gaming Mode."
+                }
+              ],
+              "focusTip": "Schedule a 10-minute catch-up window after deep work blocks."
+            }
+        """.trimIndent()
+
+        val parsedDigest = com.example.core.AiNotificationDigestRepository.parseDigestJson(
+            jsonString = rawGeminiJson,
+            scopeLabel = "Unread Alerts",
+            focusProfileDisplayName = FocusProfile.WORK.displayName,
+            totalNotificationsAnalyzed = 1,
+            totalCallsAnalyzed = 1,
+            generatedAtMillis = now
+        )
+        assertEquals("2 high-priority items intercepted across Work and Gaming sessions.", parsedDigest.headline)
+        assertEquals(2, parsedDigest.urgentActionItems.size)
+        assertEquals(2, parsedDigest.senderGroups.size)
+        assertEquals("Slack • Priya Nair", parsedDigest.senderGroups.first().senderOrApp)
+
+        val encodedEntity = com.example.core.AiNotificationDigestRepository.encodeDomainToEntity(parsedDigest)
+        val decodedDigest = com.example.core.AiNotificationDigestRepository.decodeEntityToDomain(encodedEntity)
+        assertEquals(parsedDigest.urgentActionItems, decodedDigest.urgentActionItems)
+        assertEquals(parsedDigest.senderGroups, decodedDigest.senderGroups)
+        assertEquals(parsedDigest.headline, decodedDigest.headline)
+
+        // Verify strictly BYOK Gemini API Key masking, model presets, and missing-key guard
+        assertEquals("Not Configured", com.example.core.AiNotificationDigestRepository.maskUserApiKey(""))
+        assertEquals("AIza••••••••abcd", com.example.core.AiNotificationDigestRepository.maskUserApiKey("AIzaSyD1234567890abcd"))
+        assertEquals(
+            com.example.core.GeminiModelPreset.GEMINI_2_5_PRO,
+            com.example.core.GeminiModelPreset.fromModelIdOrName("gemini-2.5-pro")
+        )
+        assertEquals(
+            com.example.core.GeminiModelPreset.GEMINI_2_5_FLASH,
+            com.example.core.GeminiModelPreset.fromModelIdOrName("GEMINI_2_5_FLASH")
+        )
+
+        val defaultFocusState = com.example.core.FocusSessionState()
+        assertFalse(defaultFocusState.hasUserGeminiApiKey)
+        val configuredFocusState = com.example.core.FocusSessionState(
+            userGeminiApiKey = "AIzaSyD9876543210wxyz",
+            selectedGeminiModelPreset = com.example.core.GeminiModelPreset.GEMINI_2_5_PRO
+        )
+        assertTrue(configuredFocusState.hasUserGeminiApiKey)
+        assertEquals("AIza••••••••wxyz", configuredFocusState.maskedUserGeminiApiKey)
+
+        // Ensure generateExecutiveDigest rejects empty BYOK key without calling any developer backend
+        val missingKeyResult = repo.generateExecutiveDigest(
+            items = allLogged,
+            userApiKey = "   ",
+            modelPreset = com.example.core.GeminiModelPreset.GEMINI_2_5_FLASH,
+            scopeLabel = "Unread Alerts",
+            focusProfileDisplayName = FocusProfile.WORK.displayName
+        )
+        assertTrue(missingKeyResult.isFailure)
+        assertTrue(missingKeyResult.exceptionOrNull()?.message?.contains("BYOK Gemini API Key Required") == true)
+
+        // Verify structured REST request builder & candidate text extraction
+        val requestJson = com.example.core.AiNotificationDigestRepository.buildStructuredGenerateContentRequestJson("Summarize 2 alerts")
+        assertTrue(requestJson.contains("application/json"))
+        assertTrue(requestJson.contains("Summarize 2 alerts"))
+
+        val simulatedRestEnvelope = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "text": "{\"headline\":\"Quick test\",\"urgentActionItems\":[],\"senderGroups\":[],\"focusTip\":\"Stay focused.\"}"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        val extractedText = com.example.core.AiNotificationDigestRepository.extractCandidateTextFromRestResponse(simulatedRestEnvelope)
+        assertTrue(extractedText?.contains("Quick test") == true)
+    }
 }
+
+
+
 
 

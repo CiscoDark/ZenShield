@@ -100,8 +100,12 @@ fun FocusDashboardScreen(
     val context = LocalContext.current
     val hasDndPermission = stateManager.isNotificationPolicyAccessGranted()
     var showSessionHistory by remember { mutableStateOf(false) }
+    var showMissedLog by remember { mutableStateOf(false) }
     val historyViewModel: FocusSessionHistoryViewModel = viewModel(
         factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
+    )
+    val missedLogViewModel: MissedNotificationLogViewModel = viewModel(
+        factory = MissedNotificationLogViewModel.Factory(stateManager.aiNotificationDigestRepository, stateManager)
     )
 
     if (showSessionHistory) {
@@ -109,6 +113,16 @@ fun FocusDashboardScreen(
             stateManager = stateManager,
             historyViewModel = historyViewModel,
             onBack = { showSessionHistory = false },
+            modifier = modifier
+        )
+        return
+    }
+
+    if (showMissedLog) {
+        MissedNotificationLogScreen(
+            stateManager = stateManager,
+            missedLogViewModel = missedLogViewModel,
+            onBack = { showMissedLog = false },
             modifier = modifier
         )
         return
@@ -215,6 +229,14 @@ fun FocusDashboardScreen(
                     onProfileSelected = { profile ->
                         stateManager.setProfile(profile, state.durationOption)
                     }
+                )
+            }
+
+            item {
+                AiNotificationDigestDashboardCard(
+                    stateManager = stateManager,
+                    missedLogViewModel = missedLogViewModel,
+                    onOpenMissedLogScreen = { showMissedLog = true }
                 )
             }
 

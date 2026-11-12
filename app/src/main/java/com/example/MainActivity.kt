@@ -160,8 +160,10 @@ import com.example.core.FocusStateManager
 import com.example.core.InterceptEvent
 import com.example.core.InterceptType
 import com.example.services.GameDetectorService
+import com.example.ui.AiNotificationDigestDashboardCard
 import com.example.ui.AppWhitelistBottomSheet
 import com.example.ui.AutoReplyCustomMessageBottomSheet
+import com.example.ui.ByokGeminiKeyVaultCard
 import com.example.ui.CallBouncerEngineCard
 import com.example.ui.CinemaModeDashboardCard
 import com.example.ui.CinemaModeScreen
@@ -173,6 +175,8 @@ import com.example.ui.GamingModeNonInteractiveOverlay
 import com.example.ui.GamingModePopupManager
 import com.example.ui.GamingModeWeeklyComparisonCard
 import com.example.ui.HomeScreenWidgetCard
+import com.example.ui.MissedNotificationLogScreen
+import com.example.ui.MissedNotificationLogViewModel
 import com.example.ui.NotificationPriorityRulesCard
 import com.example.ui.QuickSettingsTilesCard
 import com.example.ui.RustCoreInspectorCard
@@ -272,6 +276,9 @@ fun ZenShieldDashboardScreen(
     val historyViewModel: FocusSessionHistoryViewModel = viewModel(
         factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
     )
+    val missedLogViewModel: MissedNotificationLogViewModel = viewModel(
+        factory = MissedNotificationLogViewModel.Factory(stateManager.aiNotificationDigestRepository, stateManager)
+    )
     val weeklySummary by historyViewModel.weeklyShieldSummaryFlow.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -283,9 +290,10 @@ fun ZenShieldDashboardScreen(
     var showAutoReplySheet by remember { mutableStateOf(false) }
     var showCinemaFullScreen by rememberSaveable { mutableStateOf(false) }
     var showSessionHistoryFullScreen by rememberSaveable { mutableStateOf(false) }
+    var showMissedLogFullScreen by rememberSaveable { mutableStateOf(false) }
 
     // Return to Shield Command Center when pressing Back from secondary tabs
-    BackHandler(enabled = selectedTabIndex != 0 && !showCinemaFullScreen && !showSessionHistoryFullScreen) {
+    BackHandler(enabled = selectedTabIndex != 0 && !showCinemaFullScreen && !showSessionHistoryFullScreen && !showMissedLogFullScreen) {
         ExpressiveHaptics.playSpringTap(context)
         selectedTabIndex = 0
     }
@@ -558,6 +566,7 @@ fun ZenShieldDashboardScreen(
                             weeklyCallsTotal = weeklySummary.totalDeclinedCalls,
                             grantedPermissionsCount = grantedPermissionsCount,
                             stateManager = stateManager,
+                            missedLogViewModel = missedLogViewModel,
                             onOpenAnalyticsTab = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 selectedTabIndex = SentinalWorkspaceTab.ANALYTICS.ordinal
@@ -577,6 +586,10 @@ fun ZenShieldDashboardScreen(
                             onOpenAutoReplySheet = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 showAutoReplySheet = true
+                            },
+                            onOpenMissedLogScreen = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showMissedLogFullScreen = true
                             }
                         )
                     }
@@ -586,9 +599,14 @@ fun ZenShieldDashboardScreen(
                             state = state,
                             stateManager = stateManager,
                             historyViewModel = historyViewModel,
+                            missedLogViewModel = missedLogViewModel,
                             onOpenFullSessionHistory = {
                                 ExpressiveHaptics.playSpringTap(context)
                                 showSessionHistoryFullScreen = true
+                            },
+                            onOpenMissedLogScreen = {
+                                ExpressiveHaptics.playSpringTap(context)
+                                showMissedLogFullScreen = true
                             }
                         )
                     }
@@ -616,6 +634,7 @@ fun ZenShieldDashboardScreen(
                         SystemAndThemeTab(
                             state = state,
                             stateManager = stateManager,
+                            missedLogViewModel = missedLogViewModel,
                             hasNotificationListener = hasNotificationListener,
                             hasDndAccess = hasDndAccess,
                             hasRuntimePermissions = hasRuntimePermissions,
@@ -693,6 +712,19 @@ fun ZenShieldDashboardScreen(
                 stateManager = stateManager,
                 historyViewModel = historyViewModel,
                 onBack = { showSessionHistoryFullScreen = false }
+            )
+        }
+    }
+
+    if (showMissedLogFullScreen) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            MissedNotificationLogScreen(
+                stateManager = stateManager,
+                missedLogViewModel = missedLogViewModel,
+                onBack = { showMissedLogFullScreen = false }
             )
         }
     }
@@ -1019,11 +1051,13 @@ private fun ShieldCommandCenterTab(
     weeklyCallsTotal: Int,
     grantedPermissionsCount: Int,
     stateManager: FocusStateManager,
+    missedLogViewModel: MissedNotificationLogViewModel,
     onOpenAnalyticsTab: () -> Unit,
     onOpenRulesTab: () -> Unit,
     onOpenSystemTab: () -> Unit,
     onOpenCinemaScreen: () -> Unit = {},
-    onOpenAutoReplySheet: () -> Unit = {}
+    onOpenAutoReplySheet: () -> Unit = {},
+    onOpenMissedLogScreen: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -1155,6 +1189,15 @@ private fun ShieldCommandCenterTab(
                     stateManager.resetSessionCaches()
                     stateManager.setProfile(profile, state.durationOption)
                 }
+            )
+        }
+
+        // 3-ai-digest. AI Notification Executive Digest & Persistent Missed Notification Log
+        item(key = "shield_ai_notification_digest_section") {
+            AiNotificationDigestDashboardCard(
+                stateManager = stateManager,
+                missedLogViewModel = missedLogViewModel,
+                onOpenMissedLogScreen = onOpenMissedLogScreen
             )
         }
 
@@ -2187,7 +2230,11 @@ private fun AnalyticsTelemetryTab(
     historyViewModel: FocusSessionHistoryViewModel = viewModel(
         factory = FocusSessionHistoryViewModel.Factory(stateManager.focusHistoryRepository, stateManager)
     ),
-    onOpenFullSessionHistory: () -> Unit = {}
+    missedLogViewModel: MissedNotificationLogViewModel = viewModel(
+        factory = MissedNotificationLogViewModel.Factory(stateManager.aiNotificationDigestRepository, stateManager)
+    ),
+    onOpenFullSessionHistory: () -> Unit = {},
+    onOpenMissedLogScreen: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -2196,6 +2243,15 @@ private fun AnalyticsTelemetryTab(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0-ai. AI Notification Executive Digest & Missed Notification Log
+        item(key = "analytics_ai_notification_digest") {
+            AiNotificationDigestDashboardCard(
+                stateManager = stateManager,
+                missedLogViewModel = missedLogViewModel,
+                onOpenMissedLogScreen = onOpenMissedLogScreen
+            )
+        }
+
         // 0a. Focus Session History (Room Database + Recharts-inspired Bar & Line Chart)
         item(key = "analytics_focus_session_history") {
             FocusSessionHistoryDashboardCard(
@@ -2481,6 +2537,7 @@ private fun RulesAndBouncerTab(
 private fun SystemAndThemeTab(
     state: FocusSessionState,
     stateManager: FocusStateManager,
+    missedLogViewModel: MissedNotificationLogViewModel,
     hasNotificationListener: Boolean,
     hasDndAccess: Boolean,
     hasRuntimePermissions: Boolean,
@@ -2498,6 +2555,15 @@ private fun SystemAndThemeTab(
         contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0. BYOK Gemini API Key Vault Card (Strictly User-Supplied Gemini Key)
+        item(key = "system_byok_gemini_vault_card") {
+            ByokGeminiKeyVaultCard(
+                stateManager = stateManager,
+                missedLogViewModel = missedLogViewModel,
+                isEmbeddedInDigestCard = false
+            )
+        }
+
         // 1. Unified System Permissions Hub Card (All 6 Permissions Piled in One Place in Settings)
         item {
             ExpandableConfigCard(

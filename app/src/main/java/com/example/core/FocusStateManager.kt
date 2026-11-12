@@ -232,8 +232,17 @@ data class FocusSessionState(
     val priorityLevelRules: Map<NotificationPriorityLevel, GlobalFocusRuleAction> = DEFAULT_PRIORITY_LEVEL_RULES,
     val categoryPriorityOverrides: Map<NotificationCategory, NotificationPriorityLevel> = DEFAULT_CATEGORY_PRIORITIES,
     val categorizedNotifications: List<CategorizedNotificationEvent> = emptyList(),
-    val categoryInterceptCounts: Map<NotificationCategory, Int> = DEFAULT_CATEGORY_COUNTS
+    val categoryInterceptCounts: Map<NotificationCategory, Int> = DEFAULT_CATEGORY_COUNTS,
+    val autoSummarizeMissedOnSessionEnd: Boolean = true,
+    val userGeminiApiKey: String = "",
+    val selectedGeminiModelPreset: GeminiModelPreset = GeminiModelPreset.GEMINI_2_5_FLASH
 ) {
+    val hasUserGeminiApiKey: Boolean
+        get() = userGeminiApiKey.isNotBlank()
+
+    val maskedUserGeminiApiKey: String
+        get() = AiNotificationDigestRepository.maskUserApiKey(userGeminiApiKey)
+
     companion object {
         val DEFAULT_WORK_DAYS: Set<Int> = setOf(
             java.util.Calendar.MONDAY,
@@ -340,6 +349,12 @@ class FocusStateManager private constructor(context: Context) {
     val focusHistoryRepository: FocusSessionHistoryRepository by lazy {
         FocusSessionHistoryRepository(
             FocusHistoryDatabase.getInstance(appContext).focusSessionHistoryDao()
+        )
+    }
+
+    val aiNotificationDigestRepository: AiNotificationDigestRepository by lazy {
+        AiNotificationDigestRepository(
+            FocusHistoryDatabase.getInstance(appContext).missedNotificationDao()
         )
     }
 
@@ -473,6 +488,11 @@ class FocusStateManager private constructor(context: Context) {
 
         val globalRulesEnabled = prefs.getBoolean(KEY_GLOBAL_FOCUS_RULES_ENABLED, true)
         val enforceGlobalStandby = prefs.getBoolean(KEY_ENFORCE_GLOBAL_RULES_STANDBY, false)
+        val autoSummarizeMissed = prefs.getBoolean(KEY_AUTO_SUMMARIZE_MISSED, true)
+        val savedUserGeminiKey = prefs.getString(KEY_USER_BYOK_GEMINI_API_KEY, "")?.trim().orEmpty()
+        val savedModelPreset = GeminiModelPreset.fromModelIdOrName(
+            prefs.getString(KEY_SELECTED_GEMINI_MODEL_PRESET, GeminiModelPreset.GEMINI_2_5_FLASH.name)
+        )
         val priorityRules = mutableMapOf<NotificationPriorityLevel, GlobalFocusRuleAction>()
         for (level in NotificationPriorityLevel.values()) {
             val defaultAction = FocusSessionState.DEFAULT_PRIORITY_LEVEL_RULES[level] ?: GlobalFocusRuleAction.MUTE_SILENT
@@ -559,7 +579,10 @@ class FocusStateManager private constructor(context: Context) {
                 priorityLevelRules = priorityRules,
                 categoryPriorityOverrides = categoryPriorities,
                 categorizedNotifications = seedCategorized,
-                categoryInterceptCounts = categoryCounts
+                categoryInterceptCounts = categoryCounts,
+                autoSummarizeMissedOnSessionEnd = autoSummarizeMissed,
+                userGeminiApiKey = savedUserGeminiKey,
+                selectedGeminiModelPreset = savedModelPreset
             )
         }
 
@@ -619,7 +642,10 @@ class FocusStateManager private constructor(context: Context) {
             priorityLevelRules = priorityRules,
             categoryPriorityOverrides = categoryPriorities,
             categorizedNotifications = seedCategorized,
-            categoryInterceptCounts = categoryCounts
+            categoryInterceptCounts = categoryCounts,
+            autoSummarizeMissedOnSessionEnd = autoSummarizeMissed,
+            userGeminiApiKey = savedUserGeminiKey,
+            selectedGeminiModelPreset = savedModelPreset
         )
     }
 
@@ -2508,11 +2534,30 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putInt(callsKey, currentDaily).apply()
         _weeklyStatsFlow.value = calculateWeeklyStats()
         ExpressiveHaptics.playNotificationDismissed(appContext)
+
+        scope.launch {
+            runCatching {
+                aiNotificationDigestRepository.logMissedNotificationOrCall(
+                    focusProfile = current.activeProfile,
+                    sessionStartTimeMillis = current.sessionStartTimeMillis,
+                    appName = if (isVoip) "VoIP Call Bouncer" else "Cellular Call Bouncer",
+                    packageName = if (isVoip) "com.whatsapp" else "com.android.server.telecom",
+                    senderOrTitle = callerLabel,
+                    messagePreview = callEvent.detail,
+                    category = NotificationCategory.DIRECT_MESSAGES,
+                    priorityLevel = NotificationPriorityLevel.CRITICAL,
+                    appliedAction = GlobalFocusRuleAction.HIDE_COMPLETELY,
+                    isCallBounce = true,
+                    timestampMillis = now
+                )
+            }
+        }
     }
 
     fun incrementShieldedNotification(
         sourceApp: String = "Incoming Notification",
-        detail: String = "Silenced & dismissed without auto-reply"
+        detail: String = "Silenced & dismissed without auto-reply",
+        alsoLogToRoom: Boolean = true
     ) {
         val current = _state.value
         val count = current.totalShieldedNotifications + 1
@@ -2542,6 +2587,54 @@ class FocusStateManager private constructor(context: Context) {
         prefs.edit().putInt(notifsKey, currentDaily).apply()
         _weeklyStatsFlow.value = calculateWeeklyStats()
         ExpressiveHaptics.playNotificationDismissed(appContext)
+
+        if (alsoLogToRoom) {
+            scope.launch {
+                runCatching {
+                    val category = classifyIncomingNotification(sourceApp, null, sourceApp, detail)
+                    val priority = getPriorityForCategory(category)
+                    val action = getRuleActionForPriority(priority)
+                    aiNotificationDigestRepository.logMissedNotificationOrCall(
+                        focusProfile = current.activeProfile,
+                        sessionStartTimeMillis = current.sessionStartTimeMillis,
+                        appName = sourceApp.substringBefore(" • ").trim().ifBlank { "Notification" },
+                        packageName = "com.sentinal.intercept",
+                        senderOrTitle = sourceApp.substringAfter(" • ", sourceApp).trim(),
+                        messagePreview = detail,
+                        category = category,
+                        priorityLevel = priority,
+                        appliedAction = action,
+                        isCallBounce = false,
+                        timestampMillis = now
+                    )
+                }
+            }
+        }
+    }
+
+    fun setAutoSummarizeMissedOnSessionEnd(enabled: Boolean) {
+        val updated = _state.value.copy(autoSummarizeMissedOnSessionEnd = enabled)
+        _state.value = updated
+        prefs.edit().putBoolean(KEY_AUTO_SUMMARIZE_MISSED, enabled).apply()
+    }
+
+    fun setUserGeminiApiKey(apiKey: String) {
+        val cleaned = apiKey.trim()
+        val updated = _state.value.copy(userGeminiApiKey = cleaned)
+        _state.value = updated
+        prefs.edit().putString(KEY_USER_BYOK_GEMINI_API_KEY, cleaned).apply()
+    }
+
+    fun clearUserGeminiApiKey() {
+        val updated = _state.value.copy(userGeminiApiKey = "")
+        _state.value = updated
+        prefs.edit().remove(KEY_USER_BYOK_GEMINI_API_KEY).apply()
+    }
+
+    fun setSelectedGeminiModelPreset(preset: GeminiModelPreset) {
+        val updated = _state.value.copy(selectedGeminiModelPreset = preset)
+        _state.value = updated
+        prefs.edit().putString(KEY_SELECTED_GEMINI_MODEL_PRESET, preset.name).apply()
     }
 
     // =========================================================================
@@ -2808,6 +2901,26 @@ class FocusStateManager private constructor(context: Context) {
         )
         prefs.edit().putInt("user_category_count_${category.name}", newCategoryCount).apply()
 
+        if (action != GlobalFocusRuleAction.ALLOW_ALL) {
+            scope.launch {
+                runCatching {
+                    aiNotificationDigestRepository.logMissedNotificationOrCall(
+                        focusProfile = current.activeProfile,
+                        sessionStartTimeMillis = current.sessionStartTimeMillis,
+                        appName = event.appName,
+                        packageName = event.packageName,
+                        senderOrTitle = event.title,
+                        messagePreview = event.previewText,
+                        category = category,
+                        priorityLevel = priority,
+                        appliedAction = action,
+                        isCallBounce = false,
+                        timestampMillis = now
+                    )
+                }
+            }
+        }
+
         return action
     }
 
@@ -2866,7 +2979,8 @@ class FocusStateManager private constructor(context: Context) {
         if (action != GlobalFocusRuleAction.ALLOW_ALL) {
             incrementShieldedNotification(
                 sourceApp = "$appName • $sampleTitle",
-                detail = "${action.badgeText} by Global Rule (${category.shortTitle} → ${getPriorityForCategory(category).label})"
+                detail = "${action.badgeText} by Global Rule (${category.shortTitle} → ${getPriorityForCategory(category).label})",
+                alsoLogToRoom = false
             )
         } else {
             ExpressiveHaptics.playSpringTap(appContext)
@@ -3457,6 +3571,7 @@ class FocusStateManager private constructor(context: Context) {
             .putBoolean(KEY_ASK_BEFORE_GAME_ACTIVATION, state.askBeforeGameActivation)
             .putBoolean(KEY_GLOBAL_FOCUS_RULES_ENABLED, state.globalFocusRulesEnabled)
             .putBoolean(KEY_ENFORCE_GLOBAL_RULES_STANDBY, state.enforceGlobalRulesWhenStandby)
+            .putBoolean(KEY_AUTO_SUMMARIZE_MISSED, state.autoSummarizeMissedOnSessionEnd)
 
         for ((level, action) in state.priorityLevelRules) {
             editor.putString("key_priority_rule_${level.name}", action.name)
@@ -3512,6 +3627,14 @@ class FocusStateManager private constructor(context: Context) {
                     durationMinutesOverride = elapsedMinutes,
                     triggerSource = triggerSource
                 )
+            }
+            if (previousState.autoSummarizeMissedOnSessionEnd) {
+                runCatching {
+                    aiNotificationDigestRepository.notifyFocusSessionEndedForAutoDigest(
+                        sessionStartTimeMillis = startedAt,
+                        endedProfile = profile
+                    )
+                }
             }
         }
     }
@@ -3612,6 +3735,9 @@ class FocusStateManager private constructor(context: Context) {
         private const val KEY_ASK_BEFORE_GAME_ACTIVATION = "key_ask_before_game_activation"
         private const val KEY_GLOBAL_FOCUS_RULES_ENABLED = "key_global_focus_rules_enabled"
         private const val KEY_ENFORCE_GLOBAL_RULES_STANDBY = "key_enforce_global_rules_standby"
+        private const val KEY_AUTO_SUMMARIZE_MISSED = "key_auto_summarize_missed_on_session_end"
+        private const val KEY_USER_BYOK_GEMINI_API_KEY = "key_user_byok_gemini_api_key"
+        private const val KEY_SELECTED_GEMINI_MODEL_PRESET = "key_selected_gemini_model_preset"
         private const val REQUEST_CODE_EXPIRATION_ALARM = 9401
         private const val REQUEST_CODE_WORK_SCHEDULE_ALARM = 9402
         private const val REQUEST_CODE_SLEEP_SCHEDULE_ALARM = 9403
